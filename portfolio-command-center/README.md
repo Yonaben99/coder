@@ -13,8 +13,13 @@ number.
 
 ## Current status
 
-**Phase 0 — architecture only.** No application code exists yet. This repo
-currently contains planning documents:
+**Phase 1 — application foundation.** The monorepo skeleton is real and
+runs: a Next.js frontend, a Fastify backend, a Postgres schema via Prisma,
+session-based auth, and navigation across every planned screen. No external
+integration (IBKR, OpenAI, market data, news) is wired up yet — every screen
+that would show that data instead shows an honest "not connected" /
+"pending" state, never fabricated numbers. See `DEVELOPMENT_PLAN.md` for
+what Phase 2 onward adds.
 
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — system design, research findings
   (especially IBKR's actual retail-account authentication constraints), and
@@ -24,8 +29,8 @@ currently contains planning documents:
 - [`SECURITY.md`](./SECURITY.md) — secrets handling, IBKR credential policy,
   auth, and trading-safety rules.
 
-Phase 1 (repository/frontend/backend/database/auth scaffolding) has not
-started and will not start without explicit sign-off.
+Phase 2 (IBKR read-only integration) has not started and will not start
+without explicit sign-off.
 
 ## How the architecture works (short version)
 
@@ -49,27 +54,111 @@ started and will not start without explicit sign-off.
 Full detail, including the data-flow walkthrough and the reasoning behind
 each choice, is in `ARCHITECTURE.md`.
 
+## Repository layout
+
+```
+apps/
+  web/            Next.js (TypeScript) frontend
+  api/             Fastify (TypeScript) backend
+packages/
+  shared/          Types shared between frontend and backend
+  config/          Env-validation helper shared across services
+prisma/             @pcc/db — Prisma schema, migrations, and client singleton
+```
+
 ## Running it locally
 
-Not applicable yet — no code exists. This section will be filled in during
-Phase 1 with the actual `docker compose up` / `pnpm install` / migration
-steps once the scaffolding exists.
+Prerequisites: Node.js 20+, pnpm, and a local PostgreSQL server (16 is what
+this was built and tested against).
+
+1. **Install dependencies** (from the repo root):
+
+   ```bash
+   pnpm install
+   ```
+
+2. **Start PostgreSQL** and create a database and a user for it, e.g.:
+
+   ```bash
+   sudo -u postgres psql -c "CREATE USER pcc_dev WITH PASSWORD 'pcc_dev_password';"
+   sudo -u postgres psql -c "CREATE DATABASE portfolio_command_center OWNER pcc_dev;"
+   ```
+
+   (Prisma's `migrate dev` also needs permission to create a throwaway
+   shadow database: `ALTER USER pcc_dev CREATEDB;`.)
+
+3. **Configure environment variables.** Copy `.env.example` to `.env` at the
+   repo root and fill in at least `DATABASE_URL`, `SESSION_SECRET`, and
+   `APP_BASE_URL` (`http://localhost:3000` for local dev). Leave the
+   IBKR/OpenAI/market-data/news variables unset — every one of them is
+   optional until its phase lands, and the app reports those integrations as
+   "not configured" rather than failing to start.
+
+4. **Run the Prisma migration** against your local database:
+
+   ```bash
+   cd prisma
+   DATABASE_URL="postgresql://pcc_dev:pcc_dev_password@localhost:5432/portfolio_command_center" \
+     npx prisma migrate dev
+   ```
+
+5. **Run the backend** (reads env vars from the repo-root `.env` via your
+   shell, or export them directly):
+
+   ```bash
+   cd apps/api
+   pnpm dev            # http://localhost:4000
+   ```
+
+6. **Run the frontend**, in a second terminal. It needs to know where the
+   API is:
+
+   ```bash
+   cd apps/web
+   echo "NEXT_PUBLIC_API_BASE_URL=http://localhost:4000" > .env.local
+   pnpm dev            # http://localhost:3000
+   ```
+
+7. Open `http://localhost:3000`, create an account, and you'll land on the
+   Home dashboard showing honest "waiting for IBKR connection" placeholders
+   throughout.
+
+## Running tests, lint, typecheck, and build
+
+From the repo root, per package (there is no working root-level Postgres
+fixture for `pnpm -r test`, so the backend's DB-backed tests need the same
+local database as above):
+
+```bash
+pnpm --filter @pcc/shared test
+pnpm --filter @pcc/config test
+pnpm --filter @pcc/api test       # needs DATABASE_URL — reads apps/api/test/setup.ts, which loads the repo-root .env
+pnpm --filter @pcc/web test
+
+pnpm --filter <pkg> typecheck     # @pcc/shared, @pcc/config, @pcc/db, @pcc/api, @pcc/web
+pnpm --filter @pcc/web lint       # has its own eslint.config.mjs (adds React Hooks rules)
+pnpm --filter <pkg> lint          # other packages use the shared root eslint.config.mjs
+pnpm --filter <pkg> build
+```
 
 ## Required environment variables
 
-See [`.env.example`](./.env.example) for the full list once Phase 1 lands.
-In short: a Postgres connection string, a session secret, the IBKR gateway's
-base URL (not credentials — the gateway itself handles login), an OpenAI API
-key, and a market-data/news vendor API key. Nothing here is committed with
-real values; copy `.env.example` to `.env` and fill it in locally.
+See [`.env.example`](./.env.example) for the full list. In short: a Postgres
+connection string, a session secret, the app's own base URL (for CORS), the
+IBKR gateway's base URL (not credentials — the gateway itself handles
+login), an OpenAI API key, and a market-data/news vendor API key. Nothing
+here is committed with real values; copy `.env.example` to `.env` and fill
+it in locally. The frontend additionally reads `NEXT_PUBLIC_API_BASE_URL`
+(not secret — just where the browser sends requests) from its own
+`apps/web/.env.local`.
 
 ## Development phases
 
 See [`DEVELOPMENT_PLAN.md`](./DEVELOPMENT_PLAN.md) for the full breakdown.
 Summary:
 
-0. Architecture and environment *(current)*
-1. Repository, frontend, backend, database, auth, navigation
+0. Architecture and environment
+1. Repository, frontend, backend, database, auth, navigation *(current)*
 2. IBKR read-only integration
 3. OpenAI integration and tool calling
 4. News and market intelligence

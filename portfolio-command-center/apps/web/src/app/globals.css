@@ -1,0 +1,96 @@
+@import "tailwindcss";
+
+/*
+ * Financial-terminal aesthetic: near-black surfaces, high-contrast
+ * typography, a restrained accent palette, and tabular numerals for
+ * anything money-shaped. Dark mode is the default; a light theme is
+ * available via [data-theme="light"] for accessibility preference.
+ */
+@theme {
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", monospace;
+
+  --color-surface-0: #08090c;
+  --color-surface-1: #101218;
+  --color-surface-2: #171a22;
+  --color-surface-3: #1f232e;
+  --color-border: #262b38;
+  --color-border-subtle: #1b1f29;
+
+  --color-text-primary: #e8eaf0;
+  --color-text-secondary: #9aa1b2;
+  --color-text-tertiary: #666d80;
+
+  --color-accent: #3b9eff;
+  --color-accent-muted: #1c3a5c;
+
+  --color-positive: #2fd480;
+  --color-positive-muted: #123527;
+  --color-negative: #ff5c5c;
+  --color-negative-muted: #3a1919;
+  --color-warning: #f5b942;
+  --color-warning-muted: #3a2f10;
+  --color-neutral: #6b7280;
+}
+
+:root {
+  color-scheme: dark;
+  --bg: var(--color-surface-0);
+  --surface: var(--color-surface-1);
+  --surface-raised: var(--color-surface-2);
+  --surface-overlay: var(--color-surface-3);
+  --border: var(--color-border);
+  --border-subtle: var(--color-border-subtle);
+  --text-primary: var(--color-text-primary);
+  --text-secondary: var(--color-text-secondary);
+  --text-tertiary: var(--color-text-tertiary);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-overlay: #eef0f3;
+  --border: #dfe2e8;
+  --border-subtle: #eceef2;
+  --text-primary: #12141a;
+  --text-secondary: #4b5163;
+  --text-tertiary: #7a8094;
+}
+
+* {
+  border-color: var(--border);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+.font-numeric {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  background: var(--color-accent-muted);
+  color: var(--color-text-primary);
+}
+
+/* Touch-friendly, no-visible-scrollbar horizontal scroll for narrow tables */
+.scroll-x {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}

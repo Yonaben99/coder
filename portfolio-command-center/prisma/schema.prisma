@@ -1,0 +1,381 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Users, sessions ──────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  totpSecret   String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  sessions           Session[]
+  ibkrConnection     IBKRConnection?
+  portfolioSnapshots PortfolioSnapshot[]
+  alerts             Alert[]
+  aiConversations    AIConversation[]
+  orderSnapshots     OrderSnapshot[]
+  auditLogs          AuditLog[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ── IBKR connection metadata only — never credentials (see SECURITY.md) ──
+
+enum IBKRConnectionStatus {
+  NOT_CONNECTED
+  CONNECTED
+  AUTHENTICATED
+  SESSION_EXPIRED
+  FAILED
+}
+
+model IBKRConnection {
+  id                  String               @id @default(cuid())
+  userId              String               @unique
+  user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status              IBKRConnectionStatus @default(NOT_CONNECTED)
+  gatewayBaseUrl      String?
+  lastAuthenticatedAt DateTime?
+  lastCheckedAt       DateTime?
+  lastErrorMessage    String?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+}
+
+// ── Instruments and snapshots ────────────────────────────────────────────
+
+model Instrument {
+  id         String   @id @default(cuid())
+  symbol     String   @unique
+  name       String?
+  sector     String?
+  assetClass String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  positionSnapshots   PositionSnapshot[]
+  marketDataSnapshots MarketDataSnapshot[]
+  newsArticles        NewsArticle[]
+  analystEstimates    AnalystEstimate[]
+  analystRevisions    AnalystRevision[]
+  catalysts           Catalyst[]
+  orderSnapshots      OrderSnapshot[]
+  tradeSnapshots      TradeSnapshot[]
+
+  @@index([symbol])
+}
+
+model PortfolioSnapshot {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  takenAt         DateTime @default(now())
+  netLiquidation  Decimal? @db.Decimal(18, 2)
+  cash            Decimal? @db.Decimal(18, 2)
+  buyingPower     Decimal? @db.Decimal(18, 2)
+  excessLiquidity Decimal? @db.Decimal(18, 2)
+  margin          Decimal? @db.Decimal(18, 2)
+  realizedPnl     Decimal? @db.Decimal(18, 2)
+  unrealizedPnl   Decimal? @db.Decimal(18, 2)
+  dailyPnl        Decimal? @db.Decimal(18, 2)
+  source          String
+  createdAt       DateTime @default(now())
+
+  positions PositionSnapshot[]
+
+  @@index([userId, takenAt])
+}
+
+model PositionSnapshot {
+  id            String            @id @default(cuid())
+  snapshotId    String
+  snapshot      PortfolioSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  instrumentId  String
+  instrument    Instrument        @relation(fields: [instrumentId], references: [id])
+  quantity      Decimal           @db.Decimal(18, 6)
+  averageCost   Decimal?          @db.Decimal(18, 6)
+  marketPrice   Decimal?          @db.Decimal(18, 6)
+  marketValue   Decimal?          @db.Decimal(18, 2)
+  unrealizedPnl Decimal?          @db.Decimal(18, 2)
+  dailyChange   Decimal?          @db.Decimal(18, 6)
+  weight        Decimal?          @db.Decimal(9, 6)
+  createdAt     DateTime          @default(now())
+
+  @@index([snapshotId])
+  @@index([instrumentId])
+}
+
+model MarketDataSnapshot {
+  id           String     @id @default(cuid())
+  instrumentId String
+  instrument   Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+  price        Decimal?   @db.Decimal(18, 6)
+  volume       BigInt?
+  fetchedAt    DateTime   @default(now())
+  source       String
+  payload      Json?
+
+  @@index([instrumentId, fetchedAt])
+}
+
+// ── News ──────────────────────────────────────────────────────────────────
+
+enum NewsEventType {
+  EARNINGS
+  GUIDANCE
+  MERGER_ACQUISITION
+  REGULATION
+  LITIGATION
+  MANAGEMENT_CHANGE
+  MACRO
+  CONTRACT
+  OTHER
+}
+
+model NewsArticle {
+  id           String      @id @default(cuid())
+  instrumentId String?
+  instrument   Instrument? @relation(fields: [instrumentId], references: [id])
+  headline     String
+  summary      String?
+  source       String
+  url          String
+  publishedAt  DateTime
+  importance   Int?
+  createdAt    DateTime    @default(now())
+
+  events NewsEvent[]
+
+  @@index([instrumentId, publishedAt])
+}
+
+model NewsEvent {
+  id        String        @id @default(cuid())
+  articleId String
+  article   NewsArticle   @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  eventType NewsEventType
+  createdAt DateTime      @default(now())
+
+  @@index([articleId])
+}
+
+// ── Analysts ──────────────────────────────────────────────────────────────
+
+model AnalystEstimate {
+  id              String     @id @default(cuid())
+  instrumentId    String
+  instrument      Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+  averageTarget   Decimal?   @db.Decimal(18, 4)
+  highTarget      Decimal?   @db.Decimal(18, 4)
+  lowTarget       Decimal?   @db.Decimal(18, 4)
+  consensusRating String?
+  analystCount    Int?
+  source          String
+  asOf            DateTime
+  createdAt       DateTime   @default(now())
+
+  @@index([instrumentId, asOf])
+}
+
+model AnalystRevision {
+  id            String     @id @default(cuid())
+  instrumentId  String
+  instrument    Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+  firm          String?
+  previousValue String?
+  newValue      String?
+  ratingChange  String?
+  source        String
+  revisedAt     DateTime
+  createdAt     DateTime   @default(now())
+
+  @@index([instrumentId, revisedAt])
+}
+
+// ── Catalysts, alerts ────────────────────────────────────────────────────
+
+model Catalyst {
+  id           String      @id @default(cuid())
+  instrumentId String?
+  instrument   Instrument? @relation(fields: [instrumentId], references: [id])
+  description  String
+  expectedDate DateTime?
+  source       String?
+  createdAt    DateTime    @default(now())
+
+  @@index([instrumentId, expectedDate])
+}
+
+enum AlertStatus {
+  ACTIVE
+  TRIGGERED
+  DISMISSED
+}
+
+model Alert {
+  id          String      @id @default(cuid())
+  userId      String
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  condition   Json
+  status      AlertStatus @default(ACTIVE)
+  triggeredAt DateTime?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([userId, status])
+}
+
+// ── AI ────────────────────────────────────────────────────────────────────
+
+model AIConversation {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages AIMessage[]
+  analyses AIAnalysis[]
+
+  @@index([userId])
+}
+
+enum AIMessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+  TOOL
+}
+
+model AIMessage {
+  id             String         @id @default(cuid())
+  conversationId String
+  conversation   AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           AIMessageRole
+  content        String
+  toolCalls      Json?
+  createdAt      DateTime       @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+enum AIAnalysisKind {
+  FACT
+  ANALYST_ESTIMATE
+  AI_INTERPRETATION
+  SCENARIO
+  UNCERTAINTY
+}
+
+model AIAnalysis {
+  id             String         @id @default(cuid())
+  conversationId String
+  conversation   AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  kind           AIAnalysisKind
+  content        String
+  createdAt      DateTime       @default(now())
+
+  @@index([conversationId])
+}
+
+// ── Orders / trades (Phase 7, schema only for now) ──────────────────────
+
+enum OrderStatus {
+  DRAFT
+  PENDING_CONFIRMATION
+  SUBMITTED
+  FILLED
+  PARTIALLY_FILLED
+  CANCELLED
+  REJECTED
+}
+
+enum OrderSide {
+  BUY
+  SELL
+}
+
+model OrderSnapshot {
+  id           String        @id @default(cuid())
+  userId       String
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  instrumentId String
+  instrument   Instrument    @relation(fields: [instrumentId], references: [id])
+  side         OrderSide
+  quantity     Decimal       @db.Decimal(18, 6)
+  orderType    String
+  status       OrderStatus   @default(DRAFT)
+  ibkrOrderId  String?
+  confirmedAt  DateTime?
+  submittedAt  DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  trades TradeSnapshot[]
+
+  @@index([userId, status])
+}
+
+model TradeSnapshot {
+  id           String        @id @default(cuid())
+  orderId      String
+  order        OrderSnapshot @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  instrumentId String
+  instrument   Instrument    @relation(fields: [instrumentId], references: [id])
+  quantity     Decimal       @db.Decimal(18, 6)
+  price        Decimal       @db.Decimal(18, 6)
+  executedAt   DateTime
+  createdAt    DateTime      @default(now())
+
+  @@index([orderId])
+}
+
+// ── System / audit ───────────────────────────────────────────────────────
+
+enum SystemEventLevel {
+  INFO
+  WARN
+  ERROR
+}
+
+model SystemEvent {
+  id        String           @id @default(cuid())
+  component String
+  level     SystemEventLevel
+  message   String
+  metadata  Json?
+  createdAt DateTime         @default(now())
+
+  @@index([component, createdAt])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  action     String
+  targetType String?
+  targetId   String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
