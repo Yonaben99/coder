@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { ConnectionInfo } from "@pcc/shared";
 import { IntegrationStatusBadge } from "./status-badge";
 
@@ -15,15 +16,24 @@ export function ConnectionCard({ connection }: { connection: ConnectionInfo }) {
       </div>
       <div className="flex items-center gap-3">
         <IntegrationStatusBadge status={connection.status} />
-        {connection.capabilities.includes("test_connection") && (
-          <button
-            type="button"
-            disabled
-            title="Available once this integration is implemented"
-            className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-medium text-[var(--text-tertiary)] disabled:cursor-not-allowed"
+        {connection.key === "ibkr" ? (
+          <Link
+            href="/settings/ibkr"
+            className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-overlay)]"
           >
-            Test connection
-          </button>
+            Manage
+          </Link>
+        ) : (
+          connection.capabilities.includes("test_connection") && (
+            <button
+              type="button"
+              disabled
+              title="Available once this integration is implemented"
+              className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-medium text-[var(--text-tertiary)] disabled:cursor-not-allowed"
+            >
+              Test connection
+            </button>
+          )
         )}
       </div>
     </div>

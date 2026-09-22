@@ -9,7 +9,7 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
 
 export async function healthRoutesV1(app: FastifyInstance): Promise<void> {
   app.get("/health", async (request) => {
-    const services = await getAllIntegrationHealth(request.server.prisma, request.server.config);
+    const services = await getAllIntegrationHealth(request.server.prisma, request.server.config, request.server.ibkr);
     const overall = services.some((s) => s.status === "failed")
       ? "degraded"
       : services.every((s) => s.status === "operational" || s.status === "not_configured")

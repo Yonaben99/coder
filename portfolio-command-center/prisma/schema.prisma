@@ -52,6 +52,8 @@ model IBKRConnection {
   user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   status              IBKRConnectionStatus @default(NOT_CONNECTED)
   gatewayBaseUrl      String?
+  /// Which IBKR account this user has chosen to view, when the session exposes more than one. Never a credential.
+  selectedAccountId   String?
   lastAuthenticatedAt DateTime?
   lastCheckedAt       DateTime?
   lastErrorMessage    String?

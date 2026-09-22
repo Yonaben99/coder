@@ -2,6 +2,7 @@ import Link from "next/link";
 import { AuthGate } from "@/components/layout/auth-gate";
 
 const SETTINGS_LINKS = [
+  { href: "/settings/ibkr", label: "IBKR", icon: "🏦", description: "Gateway, session, authentication, account, and market-data status, plus setup instructions." },
   { href: "/settings/connections", label: "Connections", icon: "🔌", description: "IBKR, OpenAI, market data, and news integration status." },
   { href: "/settings/system-health", label: "System Health", icon: "🩺", description: "Operational status of every backend component." },
 ];

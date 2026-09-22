@@ -2,10 +2,10 @@
 
 Each phase ends with something real and testable — never a mock standing in
 for an integration that phase was supposed to build. We do not start a phase
-until the previous one is confirmed working. **Only Phase 0 is authorized
-right now; do not begin Phase 1 without explicit sign-off.**
+until the previous one is confirmed working. **Phases 0-2 are implemented.
+Do not begin Phase 3 (OpenAI) without explicit sign-off.**
 
-## Phase 0 — Architecture and environment (current)
+## Phase 0 — Architecture and environment
 
 **Goal:** know what we're building and why before writing application code.
 
@@ -20,7 +20,7 @@ right now; do not begin Phase 1 without explicit sign-off.**
 **Exit criteria:** the user has reviewed the architecture and explicitly
 approves moving to Phase 1.
 
-## Phase 1 — Repository, frontend, backend, database, auth, navigation
+## Phase 1 — Repository, frontend, backend, database, auth, navigation ✅
 
 **Goal:** a running full-stack skeleton with no fake financial data anywhere
 in it — every screen either shows real (empty) state or an honest
@@ -45,24 +45,38 @@ in it — every screen either shows real (empty) state or an honest
 System Health correctly shows every integration as not connected), reviewed
 by the user.
 
-## Phase 2 — IBKR read-only integration
+## Phase 2 — IBKR read-only integration ✅ (implemented; live auth requires user setup)
 
 **Goal:** real account data, read-only, with honest failure states.
 
-- CP Gateway running as a sidecar the backend manages.
-- `IbkrSessionManager`: tickle loop, `/iserver/auth/status` polling,
-  connected/authenticated state exposed to System Health.
-- `PortfolioDataSource` implementation over the account summary and
-  positions endpoints (net liquidation, cash, buying power, excess
-  liquidity, margin, realized/unrealized/daily P&L; per-position symbol,
-  quantity, avg cost, current price, market value, unrealized P&L, P&L%,
-  daily change, weight).
-- Home and Positions screens driven entirely by this data, each value
-  tagged `source: "IBKR"`, `timestamp`, `status`.
-- Explicit decision point with the user: whether to build the manual daily
-  gateway login into the workflow as-is, or evaluate an unsupported
-  automation tool (e.g. `ibeam`) with the tradeoffs from `SECURITY.md`
-  understood and accepted.
+- [x] `IbkrSessionManager`: tickle loop, `/iserver/auth/status` polling,
+      gateway-reachable/connected/authenticated state exposed to System
+      Health and a dedicated `GET /api/v1/integrations/ibkr/status`.
+- [x] `IbkrPortfolioDataSource implements PortfolioDataSource` over the
+      account summary, ledger, and positions endpoints (net liquidation,
+      cash, buying power, excess liquidity, margin, realized/unrealized
+      P&L computed from positions; per-position symbol, quantity, avg
+      cost, current price, market value, unrealized P&L, P&L%, daily
+      change, weight, plus contract id/currency/asset class/sector/
+      country where IBKR provides them).
+- [x] Home, Portfolio, and Position Detail screens driven by this data,
+      each value tagged `source: "IBKR"`, `timestamp`, `status`
+      (live/cached/unavailable — see `docs/IBKR_INTEGRATION.md` §4).
+- [x] Multi-account discovery and per-user selection
+      (`GET`/`POST /api/v1/portfolio/account`), never a hardcoded account
+      ID.
+- [x] 55 unit tests: error classification, mapper fixtures (clearly
+      labeled synthetic data), session/connection-manager state machines
+      via an injected fake HTTP client.
+- [ ] **Live verification against a real IBKR account** — not possible
+      from this sandboxed environment (no outbound access to run/authenticate
+      a real gateway, no browser for the required 2FA login). See
+      `docs/IBKR_INTEGRATION.md` §9 for the exact steps to connect a real
+      account; architecture and code are otherwise complete and tested.
+- Decision point deferred to the user, not decided here: whether to ever
+  adopt an unsupported gateway-login automation tool (e.g. `ibeam`) instead
+  of the manual daily browser login this phase assumes — see
+  `SECURITY.md` §2.
 
 **Exit criteria:** logged-in user with a funded/paper IBKR account sees their
 real positions and account summary in the app, with correct behavior when the

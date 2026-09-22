@@ -12,9 +12,11 @@ import { authRoutes } from "./routes/auth.js";
 import { portfolioRoutes } from "./routes/portfolio.js";
 import { connectionsRoutes } from "./routes/connections.js";
 import { systemHealthRoutes } from "./routes/system-health.js";
-import { NotConnectedPortfolioDataSource } from "./integrations/portfolio/not-connected-portfolio-data-source.js";
+import { ibkrRoutes } from "./routes/ibkr.js";
 import { NotConnectedMarketDataSource } from "./integrations/market/not-connected-market-data-source.js";
 import { NotConnectedNewsDataSource } from "./integrations/news/not-connected-news-data-source.js";
+import { IbkrConnectionManager } from "./integrations/ibkr/connection-manager.js";
+import { IbkrPortfolioDataSource } from "./integrations/ibkr/ibkr-portfolio-data-source.js";
 
 export interface BuildAppOptions {
   config: AppConfig;
@@ -31,14 +33,22 @@ export async function buildApp({ config, prisma }: BuildAppOptions): Promise<Fas
   });
   await app.register(cookie, { secret: config.SESSION_SECRET });
 
+  const ibkr = new IbkrConnectionManager(config.IBKR_GATEWAY_BASE_URL ?? null);
+  const ibkrPortfolioDataSource = new IbkrPortfolioDataSource(ibkr, prisma);
+
   const context: AppContext = {
     config,
     prisma,
-    // Phase 1 default wiring: honest "not connected" implementations.
-    // Phase 2+ swaps these for real integrations without touching routes.
-    portfolioDataSource: new NotConnectedPortfolioDataSource(),
+    // Real, read-only IBKR-backed source (Phase 2). It reports an honest
+    // "unavailable" LiveData envelope on its own when IBKR isn't
+    // configured/authenticated — no separate NotConnected implementation
+    // is needed. Market data and news remain Phase 1's honest stand-ins
+    // until Phase 4.
+    portfolioDataSource: ibkrPortfolioDataSource,
     marketDataSource: new NotConnectedMarketDataSource(),
     newsDataSource: new NotConnectedNewsDataSource(),
+    ibkr,
+    ibkrPortfolioDataSource,
   };
   await app.register(contextPlugin, context);
   await app.register(errorHandlerPlugin);
@@ -51,6 +61,7 @@ export async function buildApp({ config, prisma }: BuildAppOptions): Promise<Fas
       await versioned.register(portfolioRoutes);
       await versioned.register(connectionsRoutes);
       await versioned.register(systemHealthRoutes);
+      await versioned.register(ibkrRoutes);
     },
     { prefix: "/api/v1" },
   );

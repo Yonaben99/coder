@@ -1,6 +1,7 @@
 import type { IntegrationHealth } from "@pcc/shared";
 import type { PrismaClient } from "@pcc/db";
 import type { AppConfig } from "../../config.js";
+import type { IbkrConnectionManager } from "../../integrations/ibkr/connection-manager.js";
 
 /**
  * Every check here either performs a real test (database) or reports
@@ -30,26 +31,55 @@ export async function checkDatabase(prisma: PrismaClient): Promise<IntegrationHe
   }
 }
 
-export function checkIbkr(config: AppConfig): IntegrationHealth {
+/**
+ * Maps the four real IBKR session states (docs/IBKR_INTEGRATION.md §2) onto
+ * the four-value IntegrationHealthStatus the rest of the app renders,
+ * carrying the finer distinction (gateway vs. authentication) in `detail`
+ * for the dedicated Settings → IBKR page to show verbatim.
+ */
+export function checkIbkr(ibkr: IbkrConnectionManager): IntegrationHealth {
   const now = new Date().toISOString();
-  if (!config.IBKR_GATEWAY_BASE_URL) {
+  const state = ibkr.getSessionState();
+  const lastSyncAt = ibkr.getLastSuccessfulSyncAt()?.toISOString() ?? null;
+
+  if (!state.configured) {
     return {
       key: "ibkr",
       label: "IBKR API",
       status: "not_configured",
       lastCheckedAt: now,
       lastSuccessfulSyncAt: null,
-      detail: "IBKR read-only integration ships in Phase 2.",
+      detail: "IBKR read-only integration is not connected. Set IBKR_GATEWAY_BASE_URL and see docs/IBKR_INTEGRATION.md.",
     };
   }
-  // Phase 2 replaces this branch with a real /iserver/auth/status check.
+  if (!state.gatewayReachable) {
+    return {
+      key: "ibkr",
+      label: "IBKR API",
+      status: "failed",
+      lastCheckedAt: state.lastCheckedAt?.toISOString() ?? now,
+      lastSuccessfulSyncAt: lastSyncAt,
+      detail: state.lastError?.message ?? "IBKR gateway is unreachable.",
+    };
+  }
+  if (!state.authenticated) {
+    return {
+      key: "ibkr",
+      label: "IBKR API",
+      status: "degraded",
+      lastCheckedAt: state.lastCheckedAt?.toISOString() ?? now,
+      lastSuccessfulSyncAt: lastSyncAt,
+      detail: state.lastSuccessfulAuthAt
+        ? "IBKR brokerage session expired — log in again at the gateway's URL."
+        : "IBKR gateway is running but not authenticated — log in at the gateway's URL (see Settings → IBKR).",
+    };
+  }
   return {
     key: "ibkr",
     label: "IBKR API",
-    status: "not_configured",
-    lastCheckedAt: now,
-    lastSuccessfulSyncAt: null,
-    detail: "IBKR gateway URL is set, but the Phase 2 integration is not implemented yet.",
+    status: "operational",
+    lastCheckedAt: state.lastCheckedAt?.toISOString() ?? now,
+    lastSuccessfulSyncAt: lastSyncAt,
   };
 }
 
@@ -110,7 +140,8 @@ export function checkScheduledJobs(): IntegrationHealth {
 export async function getAllIntegrationHealth(
   prisma: PrismaClient,
   config: AppConfig,
+  ibkr: IbkrConnectionManager,
 ): Promise<IntegrationHealth[]> {
   const database = await checkDatabase(prisma);
-  return [checkIbkr(config), checkOpenAi(config), checkMarketData(config), checkNews(config), database, checkScheduledJobs()];
+  return [checkIbkr(ibkr), checkOpenAi(config), checkMarketData(config), checkNews(config), database, checkScheduledJobs()];
 }

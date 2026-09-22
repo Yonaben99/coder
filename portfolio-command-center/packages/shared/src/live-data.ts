@@ -4,14 +4,14 @@
  * unavailable data as live by accident — the source, timestamp, and status
  * travel with the value itself instead of being inferred client-side.
  */
-export type LiveDataStatus = "live" | "delayed" | "unavailable";
+export type LiveDataStatus = "live" | "delayed" | "cached" | "unavailable";
 
 export interface LiveDataMeta {
   source: string;
   /** ISO 8601 timestamp of when this value was fetched, or null if never fetched. */
   timestamp: string | null;
   status: LiveDataStatus;
-  /** Required when status is "unavailable" — the real reason, shown to the user. */
+  /** Set on "cached" (why the refresh fell back) and "unavailable" (the real reason, shown to the user). */
   reason?: string;
 }
 

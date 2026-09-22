@@ -50,12 +50,14 @@ export function IntegrationStatusBadge({ status }: { status: IntegrationHealthSt
 const LIVE_DATA_STATUS_TONE: Record<LiveDataStatus, BadgeTone> = {
   live: "positive",
   delayed: "warning",
+  cached: "warning",
   unavailable: "neutral",
 };
 
 const LIVE_DATA_STATUS_LABEL: Record<LiveDataStatus, string> = {
   live: "LIVE",
   delayed: "DELAYED",
+  cached: "CACHED",
   unavailable: "LIVE DATA UNAVAILABLE",
 };
 

@@ -32,9 +32,18 @@ Rules that follow from this:
   a browser pointed at the gateway; our backend never sees or handles the
   password.
 - The `ibkr_connections` table stores only session/connection *metadata*
-  (gateway reachability, last-authenticated timestamp, connection status) —
-  never credentials, never a session token that could be replayed outside the
-  gateway's own session.
+  (gateway reachability, last-authenticated timestamp, connection status,
+  which account a user has selected) — never credentials, never a session
+  token that could be replayed outside the gateway's own session. Confirmed
+  in the Phase 2 implementation: nothing in `apps/api/src/integrations/ibkr/`
+  reads, accepts, or forwards a password or 2FA code.
+- The gateway serves HTTPS on `localhost` with a self-signed certificate by
+  default (IBKR's own documented local setup). `GatewayHttpClient`
+  (`apps/api/src/integrations/ibkr/client.ts`) disables TLS verification —
+  but only for this one client, only ever used against the
+  operator-configured `IBKR_GATEWAY_BASE_URL`, never for any other outbound
+  request in the app (OpenAI, market data, etc. all keep normal TLS
+  verification).
 - If, later, the user explicitly opts into an unsupported automation tool
   (e.g. `ibeam`) to avoid the daily manual login, that decision is made
   knowingly and separately — it requires storing IBKR credentials somewhere

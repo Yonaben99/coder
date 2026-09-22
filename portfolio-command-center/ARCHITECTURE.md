@@ -138,20 +138,40 @@ backend.
 
 ### 3.3 IBKR integration layer
 
-- Runs the CP Gateway as a sibling process/container the backend controls.
-- A dedicated `IbkrSessionManager`:
-  - Pings `/tickle` on an interval.
-  - Polls `/iserver/auth/status` and exposes `connected` / `authenticated`
-    distinctly.
-  - Surfaces "needs manual re-login" as a first-class state consumed by
-    System Health and by every read that depends on IBKR data.
-- Phase 2 is **read-only**: account summary and positions endpoints only. No
-  order endpoints are called until Phase 7, and even then every order requires
-  explicit user confirmation in the UI before the backend calls IBKR.
-- The client is written against a narrow internal interface
-  (`PortfolioDataSource`: `getAccountSummary`, `getPositions`, …) so a future
+**Implemented in Phase 2** — `apps/api/src/integrations/ibkr/`:
+
+- `client.ts` (`GatewayHttpClient`) — thin HTTPS client against the gateway
+  the operator runs themselves (TLS verification is disabled only for this
+  specific local connection; see `SECURITY.md` §2).
+- `session-manager.ts` (`IbkrSessionManager`) — owns three of the four
+  states in `docs/IBKR_INTEGRATION.md` §2: pings `/tickle` on a 60s
+  interval, polls `/iserver/auth/status`, and exposes gateway-reachable /
+  connected / authenticated distinctly (never collapsed into one "connected"
+  flag).
+- `connection-manager.ts` (`IbkrConnectionManager`) — the fourth state
+  (account data available), account discovery/caching, and the
+  live/cached/unavailable envelope logic for portfolio bundles and market
+  data (see `docs/IBKR_INTEGRATION.md` §4).
+- `errors.ts` — classifies every failure into a safe `IbkrErrorCode`; routes
+  and logs never see a raw IBKR error body.
+- `portfolio-mapper.ts` / `market-data.ts` — map IBKR's raw JSON into
+  `@pcc/shared`'s `AccountSummary`/`Position`/quote shapes.
+- `ibkr-portfolio-data-source.ts` (`IbkrPortfolioDataSource implements
+  PortfolioDataSource`) — the only implementation of the interface now;
+  it reports an honest `unavailable` `LiveData` envelope on its own when
+  IBKR isn't configured/authenticated, so no separate "not connected" stub
+  class is needed.
+- Read-only, as designed: no file in this module calls an order endpoint.
+  No order endpoints are called until Phase 7, and even then every order
+  requires explicit user confirmation in the UI before the backend calls
+  IBKR.
+- The rest of the app depends only on `PortfolioDataSource`, so a future
   change (e.g. IBKR's own OAuth 2.0 individual rollout, or adding a second
-  broker) replaces the implementation, not its callers.
+  broker) means writing a new class implementing that interface — routes,
+  the frontend, and the future AI tools don't change.
+
+Full endpoint list, refresh strategy, and known limitations:
+`docs/IBKR_INTEGRATION.md`.
 
 ### 3.4 OpenAI / AI layer
 

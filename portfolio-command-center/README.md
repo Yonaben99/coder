@@ -13,13 +13,17 @@ number.
 
 ## Current status
 
-**Phase 1 — application foundation.** The monorepo skeleton is real and
-runs: a Next.js frontend, a Fastify backend, a Postgres schema via Prisma,
-session-based auth, and navigation across every planned screen. No external
-integration (IBKR, OpenAI, market data, news) is wired up yet — every screen
-that would show that data instead shows an honest "not connected" /
-"pending" state, never fabricated numbers. See `DEVELOPMENT_PLAN.md` for
-what Phase 2 onward adds.
+**Phase 2 — IBKR read-only integration implemented; live authentication
+requires user setup.** The app has a real, tested IBKR Client Portal Gateway
+integration (session management, account discovery, account
+summary/positions/allocation, market data for held positions) behind the
+`PortfolioDataSource` interface — but this development sandbox cannot run a
+real gateway or complete IBKR's required 2FA browser login, so it has not
+been exercised against a live account from here. See
+[`docs/IBKR_INTEGRATION.md`](./docs/IBKR_INTEGRATION.md) §9 for the exact
+steps to connect your own account. OpenAI, market/news data for arbitrary
+symbols, and analyst data are still Phase 3+ and remain honest "not
+connected" placeholders.
 
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — system design, research findings
   (especially IBKR's actual retail-account authentication constraints), and
@@ -28,9 +32,12 @@ what Phase 2 onward adds.
   phase's exit criteria.
 - [`SECURITY.md`](./SECURITY.md) — secrets handling, IBKR credential policy,
   auth, and trading-safety rules.
+- [`docs/IBKR_INTEGRATION.md`](./docs/IBKR_INTEGRATION.md) — IBKR
+  architecture, endpoints used, refresh strategy, known limitations, and
+  setup/troubleshooting.
 
-Phase 2 (IBKR read-only integration) has not started and will not start
-without explicit sign-off.
+Phase 3 (OpenAI integration) has not started and will not start without
+explicit sign-off.
 
 ## How the architecture works (short version)
 
@@ -44,7 +51,9 @@ without explicit sign-off.
   IBKR currently supports for individual retail accounts. Authentication is
   a manual, browser-based login (username, password, 2FA) — IBKR does not
   provide a supported automated flow for individuals. We never store the
-  IBKR password. See `ARCHITECTURE.md` §1.1 and `SECURITY.md` §2.
+  IBKR password. **Implemented** (Phase 2, read-only) in
+  `apps/api/src/integrations/ibkr/`. See `ARCHITECTURE.md` §3.3,
+  `SECURITY.md` §2, and `docs/IBKR_INTEGRATION.md`.
 - **AI:** OpenAI, using backend-defined tool functions (real data lookups)
   the model calls as needed, not a static prompt dump of portfolio state.
 - **Market data / news:** a vendor-agnostic interface, backed initially by
@@ -89,10 +98,13 @@ this was built and tested against).
 
 3. **Configure environment variables.** Copy `.env.example` to `.env` at the
    repo root and fill in at least `DATABASE_URL`, `SESSION_SECRET`, and
-   `APP_BASE_URL` (`http://localhost:3000` for local dev). Leave the
-   IBKR/OpenAI/market-data/news variables unset — every one of them is
-   optional until its phase lands, and the app reports those integrations as
-   "not configured" rather than failing to start.
+   `APP_BASE_URL` (`http://localhost:3000` for local dev). Leave
+   OpenAI/market-data/news unset — those are still Phase 3+, and the app
+   reports them as "not configured" rather than failing to start. `IBKR_GATEWAY_BASE_URL`
+   is optional too, but is now real: set it once you have your own Client
+   Portal Gateway running and authenticated (see
+   [`docs/IBKR_INTEGRATION.md`](./docs/IBKR_INTEGRATION.md) §9) to see your
+   real account data instead of the "not connected" placeholder.
 
 4. **Run the Prisma migration** against your local database:
 

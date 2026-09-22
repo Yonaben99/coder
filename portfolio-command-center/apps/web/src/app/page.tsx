@@ -22,7 +22,7 @@ function HomeContent() {
 
   const ibkr = connections.status === "success" ? connections.data.connections.find((c) => c.key === "ibkr") : null;
   const account = summary.status === "success" ? summary.data.data : null;
-  const hint = summary.status === "success" && summary.data.meta.status === "unavailable" ? "Waiting for IBKR connection" : undefined;
+  const meta = summary.status === "success" ? summary.data.meta : undefined;
 
   return (
     <div className="flex flex-col gap-8">
@@ -38,14 +38,14 @@ function HomeContent() {
 
       <section>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <MetricCard label="Portfolio Value" value={formatCurrency(account?.netLiquidation ?? null)} hint={hint} />
-          <MetricCard label="Daily P&L" value={formatCurrency(account?.dailyPnl ?? null)} hint={hint} />
-          <MetricCard label="YTD" value={formatCurrency(account?.ytdPnl ?? null)} hint={hint} />
-          <MetricCard label="Cash" value={formatCurrency(account?.cash ?? null)} hint={hint} />
-          <MetricCard label="Buying Power" value={formatCurrency(account?.buyingPower ?? null)} hint={hint} />
-          <MetricCard label="Excess Liquidity" value={formatCurrency(account?.excessLiquidity ?? null)} hint={hint} />
-          <MetricCard label="Margin" value={formatCurrency(account?.margin ?? null)} hint={hint} />
-          <MetricCard label="Leverage" value={account?.leverage != null ? `${account.leverage.toFixed(2)}x` : null} hint={hint} />
+          <MetricCard label="Portfolio Value" value={formatCurrency(account?.netLiquidation ?? null)} meta={meta} />
+          <MetricCard label="Daily P&L" value={formatCurrency(account?.dailyPnl ?? null)} meta={meta} />
+          <MetricCard label="YTD" value={formatCurrency(account?.ytdPnl ?? null)} meta={meta} />
+          <MetricCard label="Cash" value={formatCurrency(account?.cash ?? null)} meta={meta} />
+          <MetricCard label="Buying Power" value={formatCurrency(account?.buyingPower ?? null)} meta={meta} />
+          <MetricCard label="Excess Liquidity" value={formatCurrency(account?.excessLiquidity ?? null)} meta={meta} />
+          <MetricCard label="Margin" value={formatCurrency(account?.margin ?? null)} meta={meta} />
+          <MetricCard label="Leverage" value={account?.leverage != null ? `${account.leverage.toFixed(2)}x` : null} meta={meta} />
         </div>
         {summary.status === "loading" && <div className="mt-3"><LoadingState label="Loading account summary…" /></div>}
         {summary.status === "error" && <div className="mt-3"><ErrorState message={summary.message} /></div>}
