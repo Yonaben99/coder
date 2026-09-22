@@ -13,10 +13,14 @@ import { portfolioRoutes } from "./routes/portfolio.js";
 import { connectionsRoutes } from "./routes/connections.js";
 import { systemHealthRoutes } from "./routes/system-health.js";
 import { ibkrRoutes } from "./routes/ibkr.js";
+import { aiRoutes } from "./routes/ai.js";
 import { NotConnectedMarketDataSource } from "./integrations/market/not-connected-market-data-source.js";
 import { NotConnectedNewsDataSource } from "./integrations/news/not-connected-news-data-source.js";
 import { IbkrConnectionManager } from "./integrations/ibkr/connection-manager.js";
 import { IbkrPortfolioDataSource } from "./integrations/ibkr/ibkr-portfolio-data-source.js";
+import { OpenAIProvider } from "./integrations/openai/openai-provider.js";
+import { PortfolioAiAgent } from "./integrations/openai/agent.js";
+import { ConversationService } from "./integrations/openai/conversation-service.js";
 
 export interface BuildAppOptions {
   config: AppConfig;
@@ -35,6 +39,15 @@ export async function buildApp({ config, prisma }: BuildAppOptions): Promise<Fas
 
   const ibkr = new IbkrConnectionManager(config.IBKR_GATEWAY_BASE_URL ?? null);
   const ibkrPortfolioDataSource = new IbkrPortfolioDataSource(ibkr, prisma);
+  const marketDataSource = new NotConnectedMarketDataSource();
+
+  const aiProvider = new OpenAIProvider(config.OPENAI_API_KEY ?? null, config.OPENAI_MODEL);
+  const conversations = new ConversationService(prisma);
+  const aiAgent = new PortfolioAiAgent(
+    aiProvider,
+    { portfolioDataSource: ibkrPortfolioDataSource, ibkrPortfolioDataSource, marketDataSource },
+    conversations,
+  );
 
   const context: AppContext = {
     config,
@@ -45,10 +58,12 @@ export async function buildApp({ config, prisma }: BuildAppOptions): Promise<Fas
     // is needed. Market data and news remain Phase 1's honest stand-ins
     // until Phase 4.
     portfolioDataSource: ibkrPortfolioDataSource,
-    marketDataSource: new NotConnectedMarketDataSource(),
+    marketDataSource,
     newsDataSource: new NotConnectedNewsDataSource(),
     ibkr,
     ibkrPortfolioDataSource,
+    aiAgent,
+    conversations,
   };
   await app.register(contextPlugin, context);
   await app.register(errorHandlerPlugin);
@@ -62,6 +77,7 @@ export async function buildApp({ config, prisma }: BuildAppOptions): Promise<Fas
       await versioned.register(connectionsRoutes);
       await versioned.register(systemHealthRoutes);
       await versioned.register(ibkrRoutes);
+      await versioned.register(aiRoutes);
     },
     { prefix: "/api/v1" },
   );

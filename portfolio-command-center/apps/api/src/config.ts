@@ -11,7 +11,10 @@ const envSchema = z.object({
   // Optional: unset means the integration is "not_configured", not "failed".
   IBKR_GATEWAY_BASE_URL: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
-  OPENAI_MODEL: z.string().optional(),
+  // gpt-5.4-mini: current-generation, cost-effective, supports tool calling.
+  // Never assume this stays available forever — override via env instead of
+  // changing this default when it's retired. See docs/OPENAI_INTEGRATION.md.
+  OPENAI_MODEL: z.string().default("gpt-5.4-mini"),
   MARKET_INTEL_PROVIDER: z.string().optional(),
   MARKET_INTEL_API_KEY: z.string().optional(),
   SENTRY_DSN: z.string().optional(),

@@ -21,6 +21,7 @@
     "@pcc/shared": "workspace:*",
     "fastify": "^5.0.0",
     "fastify-plugin": "^5.0.1",
+    "openai": "^7.0.0",
     "pino": "^9.5.0",
     "zod": "^3.23.8"
   },

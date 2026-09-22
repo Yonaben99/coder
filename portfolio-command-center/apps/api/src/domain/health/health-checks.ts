@@ -2,6 +2,7 @@ import type { IntegrationHealth } from "@pcc/shared";
 import type { PrismaClient } from "@pcc/db";
 import type { AppConfig } from "../../config.js";
 import type { IbkrConnectionManager } from "../../integrations/ibkr/connection-manager.js";
+import type { PortfolioAiAgent } from "../../integrations/openai/agent.js";
 
 /**
  * Every check here either performs a real test (database) or reports
@@ -83,17 +84,54 @@ export function checkIbkr(ibkr: IbkrConnectionManager): IntegrationHealth {
   };
 }
 
-export function checkOpenAi(config: AppConfig): IntegrationHealth {
+/**
+ * Mirrors checkIbkr's honesty rule: "operational" only after a real
+ * successful call, never just because a key is present — polling this
+ * endpoint must not itself spend OpenAI tokens (see
+ * docs/OPENAI_INTEGRATION.md "Cost controls"), so we report the *last*
+ * real call's outcome rather than making a fresh one here.
+ */
+export function checkOpenAi(aiAgent: PortfolioAiAgent): IntegrationHealth {
   const now = new Date().toISOString();
+  const status = aiAgent.getProviderStatus();
+
+  if (!status.configured) {
+    return {
+      key: "openai",
+      label: "OpenAI API",
+      status: "not_configured",
+      lastCheckedAt: now,
+      lastSuccessfulSyncAt: null,
+      detail: "Portfolio AI is not connected. Set OPENAI_API_KEY and see docs/OPENAI_INTEGRATION.md.",
+    };
+  }
+  if (status.lastError && !status.lastSuccessfulCallAt) {
+    return {
+      key: "openai",
+      label: "OpenAI API",
+      status: "failed",
+      lastCheckedAt: now,
+      lastSuccessfulSyncAt: null,
+      detail: status.lastError,
+    };
+  }
+  if (!status.lastSuccessfulCallAt) {
+    return {
+      key: "openai",
+      label: "OpenAI API",
+      status: "degraded",
+      lastCheckedAt: now,
+      lastSuccessfulSyncAt: null,
+      detail: "OpenAI key is set but hasn't been verified by a successful call yet — send a message in AI Chat to test it.",
+    };
+  }
   return {
     key: "openai",
     label: "OpenAI API",
-    status: "not_configured",
+    status: status.lastError ? "degraded" : "operational",
     lastCheckedAt: now,
-    lastSuccessfulSyncAt: null,
-    detail: config.OPENAI_API_KEY
-      ? "OpenAI key is set, but the Phase 3 integration is not implemented yet."
-      : "Portfolio AI integration ships in Phase 3.",
+    lastSuccessfulSyncAt: status.lastSuccessfulCallAt,
+    detail: status.lastError ?? undefined,
   };
 }
 
@@ -141,7 +179,8 @@ export async function getAllIntegrationHealth(
   prisma: PrismaClient,
   config: AppConfig,
   ibkr: IbkrConnectionManager,
+  aiAgent: PortfolioAiAgent,
 ): Promise<IntegrationHealth[]> {
   const database = await checkDatabase(prisma);
-  return [checkIbkr(ibkr), checkOpenAi(config), checkMarketData(config), checkNews(config), database, checkScheduledJobs()];
+  return [checkIbkr(ibkr), checkOpenAi(aiAgent), checkMarketData(config), checkNews(config), database, checkScheduledJobs()];
 }

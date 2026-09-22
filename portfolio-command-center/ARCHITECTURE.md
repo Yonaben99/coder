@@ -175,19 +175,42 @@ Full endpoint list, refresh strategy, and known limitations:
 
 ### 3.4 OpenAI / AI layer
 
-- Backend defines the tool functions listed in the product spec
-  (`getAccountSummary`, `getPositions`, `getPortfolioNews`, `getRiskMetrics`,
-  etc.) as thin adapters over `domain/` and the integration layers — never as
-  a dump of portfolio state into the prompt.
-- The orchestrator loop: send user message + tool schemas → model requests
-  tool call(s) → backend executes against real data → results returned to the
-  model → repeat until the model returns a final answer.
-- System prompt requires the model to label every claim as **FACT / ANALYST
-  ESTIMATE / AI INTERPRETATION / SCENARIO / UNCERTAINTY**; this is enforced in
-  the prompt and spot-checked in tests, not just requested.
-- Conversations and individual tool calls are persisted (`ai_conversations`,
-  `ai_messages`) for auditability — what the AI was told and what it
-  concluded is reconstructable later.
+**Implemented in Phase 3** — `apps/api/src/integrations/openai/`:
+
+- `openai-provider.ts` (`OpenAIProvider implements AIProvider`) — the only
+  file that imports the `openai` SDK, using its Responses API
+  (`client.responses.create`), OpenAI's current recommended API surface.
+  `AIProvider` (`domain/data-sources/ai-provider.ts`) is a provider-agnostic
+  "one model turn" contract, so a future provider swap means writing one new
+  class, not touching the agent, tools, or routes.
+- `agent.ts` (`PortfolioAiAgent`) — the orchestrator loop: send message
+  history + tool schemas → model requests tool call(s) → `tool-executor.ts`
+  runs them against `domain/` and the Phase 2 integration layer (never IBKR
+  directly) → results returned to the model, exact status/reason intact →
+  repeat (capped at 6 iterations) until a final answer. Every step is
+  persisted incrementally via `conversation-service.ts`.
+- 11 tools (`tool-definitions.ts` + `tool-executor.ts`):
+  `getAccountSummary`, `getPositions`, `getPosition`,
+  `getPortfolioAllocation`, `getPortfolioPerformance`, `getMarketData`,
+  `getRecentTrades`, `getOpenOrders`, `getHistoricalPortfolioSnapshots`,
+  `getRiskMetrics`, `getPortfolioContext`. Each returns the same
+  `LiveData<T>` envelope Phase 2 established for IBKR data — the tool layer
+  reuses that contract rather than inventing a second one. Tools for
+  capabilities that don't exist yet (trades, orders, snapshot history, risk)
+  are real functions returning an honest `unavailable` envelope, the same
+  pattern as Phase 1/2's `NotConnected*` stand-ins.
+- `system-prompt.ts` requires the model to label every claim as **FACT /
+  CURRENT DATA / ANALYST ESTIMATE / AI INTERPRETATION / SCENARIO /
+  UNCERTAINTY**, defaults responses to Hebrew, and forbids answering a
+  current-state question from conversation memory alone; enforced in the
+  prompt text and spot-checked in `system-prompt.test.ts`, not just assumed.
+- Conversations and messages are persisted (`AIConversation`, `AIMessage`)
+  for auditability and continuity — what the AI was told and what it
+  concluded is reconstructable later, and a conversation can be resumed.
+
+Full detail, including why data can't be invented mechanically (not just by
+prompt instruction), model configuration, and cost controls:
+`docs/OPENAI_INTEGRATION.md`.
 
 ### 3.5 Market data / news layer
 

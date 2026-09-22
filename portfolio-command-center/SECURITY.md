@@ -1,7 +1,8 @@
 # Security — Portfolio Command Center
 
-Status: Phase 0. This document sets the rules the implementation must follow
-starting in Phase 1; nothing here describes something already built.
+Status: Phases 1-3 implemented (auth, IBKR read-only, Portfolio AI). This
+document sets the rules the implementation follows; where a rule is now
+backed by real code, that's called out inline.
 
 ## 1. Secrets
 
@@ -16,7 +17,13 @@ starting in Phase 1; nothing here describes something already built.
   the logger level, not left to call sites to remember.
 - No secret or credential is ever sent to OpenAI, in a prompt, tool result,
   or system message. OpenAI tool functions return portfolio/market data
-  only.
+  only. Confirmed in the Phase 3 implementation:
+  `apps/api/src/integrations/openai/tool-executor.ts`'s tools only ever
+  return `LiveData<T>` shapes built from `PortfolioDataSource` /
+  `IbkrPortfolioDataSource` — none of them touch IBKR session state,
+  cookies, or credentials, and `OPENAI_API_KEY` is read once in `config.ts`
+  and never returned by any route or written to Postgres. See
+  `docs/OPENAI_INTEGRATION.md` §8.
 
 ## 2. IBKR credentials — the hard constraint
 

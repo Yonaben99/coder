@@ -2,8 +2,9 @@
 
 Each phase ends with something real and testable — never a mock standing in
 for an integration that phase was supposed to build. We do not start a phase
-until the previous one is confirmed working. **Phases 0-2 are implemented.
-Do not begin Phase 3 (OpenAI) without explicit sign-off.**
+until the previous one is confirmed working. **Phases 0-3 are implemented.
+Do not begin Phase 4 (news and market intelligence) without explicit
+sign-off.**
 
 ## Phase 0 — Architecture and environment
 
@@ -83,28 +84,42 @@ real positions and account summary in the app, with correct behavior when the
 session expires (visible "re-authenticate" state, no stale/fabricated
 numbers).
 
-## Phase 3 — OpenAI integration and tool calling
+## Phase 3 — OpenAI integration and tool calling ✅ (implemented; live testing requires OPENAI_API_KEY)
 
 **Goal:** the AI chat answers questions using the tool functions in
 `ARCHITECTURE.md` §3.4, not a static prompt dump.
 
-- Implement the tool functions that Phase 2 makes possible now
-  (`getAccountSummary`, `getPositions`, `getPosition`,
-  `getPortfolioAllocation`, `getPortfolioPerformance`,
-  `getHistoricalPortfolioSnapshots`, `getRecentTrades`, `getOpenOrders`).
-  Tools that depend on later phases (`getMarketData`, `getPortfolioNews`,
-  `getNews`, `getAnalystChanges`, `getEarnings`, `getCatalysts`,
-  `getRiskMetrics`) are added incrementally as those phases land — never
-  stubbed with fake data in the meantime.
-- Tool-calling orchestration loop with persisted conversations/messages.
-- System prompt enforces FACT / ANALYST ESTIMATE / AI INTERPRETATION /
-  SCENARIO / UNCERTAINTY labeling; covered by tests asserting the model
-  output is structured, not just prompted.
-- AI Chat screen.
+- [x] All 11 spec'd tool functions implemented: `getAccountSummary`,
+      `getPositions`, `getPosition`, `getPortfolioAllocation`,
+      `getPortfolioPerformance`, `getMarketData`, `getRecentTrades`,
+      `getOpenOrders`, `getHistoricalPortfolioSnapshots`, `getRiskMetrics`,
+      `getPortfolioContext`. The four that depend on capabilities later
+      phases build (`getRecentTrades`, `getOpenOrders`,
+      `getHistoricalPortfolioSnapshots`, `getRiskMetrics`) are real
+      functions returning an honest `unavailable` envelope — never stubbed
+      with fake data.
+- [x] Tool-calling orchestration loop (`PortfolioAiAgent`) with persisted
+      conversations/messages, capped iterations, provider-agnostic
+      (`AIProvider` interface, `OpenAIProvider` the only implementation).
+- [x] System prompt enforces FACT / CURRENT DATA / ANALYST ESTIMATE / AI
+      INTERPRETATION / SCENARIO / UNCERTAINTY labeling, defaults to Hebrew,
+      and forbids answering current-state questions from memory alone;
+      covered by `system-prompt.test.ts` asserting the rules are present,
+      and `agent.test.ts` asserting the plumbing that carries a tool's
+      honest status/reason to the model is never altered or dropped.
+- [x] Real AI Chat screen: conversation list, message thread, suggested
+      prompts, tool-call transparency badges, mobile-responsive.
+- [ ] **Live verification against a real OpenAI account** — not possible
+      from this sandboxed environment (`OPENAI_API_KEY` unset, confirmed
+      before implementation). See `docs/OPENAI_INTEGRATION.md` §9 for the
+      exact steps to test live; architecture and code are otherwise
+      complete and tested (97 backend tests).
 
 **Exit criteria:** user can ask "what's my AAPL position worth right now"
 and get a correct, tool-sourced answer; asking something outside available
-tools produces an honest "I don't have that yet" rather than a guess.
+tools produces an honest "I don't have that yet" rather than a guess. Code
+and tests confirm this mechanically; the live model-behavior confirmation
+is blocked on an API key this environment doesn't have.
 
 ## Phase 4 — News and market intelligence
 
