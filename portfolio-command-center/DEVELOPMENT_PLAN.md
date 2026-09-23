@@ -1,0 +1,328 @@
+# Development Plan — Portfolio Command Center
+
+Each phase ends with something real and testable — never a mock standing in
+for an integration that phase was supposed to build. We do not start a phase
+until the previous one is confirmed working. **Phases 0-6 are implemented.
+Do not begin Phase 7 (trading with explicit confirmation, plus production
+deployment, security hardening, performance hardening, operational
+readiness, backup/recovery, production secrets management, and final
+end-to-end validation) without explicit sign-off.**
+
+## Phase 0 — Architecture and environment
+
+**Goal:** know what we're building and why before writing application code.
+
+- [x] Inspect the environment and available tooling.
+- [x] Research IBKR's actual supported authentication method for individual
+      retail accounts.
+- [x] Research OpenAI tool-calling integration pattern.
+- [x] Research market data / news API options.
+- [x] Write `ARCHITECTURE.md`, `SECURITY.md`, `README.md`, `.env.example`,
+      `.gitignore`.
+
+**Exit criteria:** the user has reviewed the architecture and explicitly
+approves moving to Phase 1.
+
+## Phase 1 — Repository, frontend, backend, database, auth, navigation ✅
+
+**Goal:** a running full-stack skeleton with no fake financial data anywhere
+in it — every screen either shows real (empty) state or an honest
+"not connected yet" placeholder.
+
+- Monorepo layout: `apps/web` (Next.js), `apps/api` (Fastify), `packages/db`
+  (Prisma schema/migrations), `packages/shared` (shared TS types).
+- Postgres running locally via Docker Compose; Prisma schema for the entities
+  in `ARCHITECTURE.md` §6, migrated.
+- Auth: signup/login for a single initial user, Argon2-hashed passwords,
+  httpOnly session cookies, TOTP 2FA.
+- Navigation shell: desktop sidebar + mobile bottom nav across the screens
+  listed in the spec (Home, Dashboard, Positions, Position Detail, News,
+  Updates, Scan, Targets, Catalysts, Risk, Analysts, Review, AI Chat,
+  Settings, Connections, System Health) — screens can be empty/placeholder
+  content, but the routes and layout are real.
+- System Health page wired to real (currently-all-`Failed`, because nothing
+  is connected yet) checks, not hardcoded "Operational".
+- CI: typecheck, lint, build on push.
+
+**Exit criteria:** app runs locally end-to-end (login → empty dashboard →
+System Health correctly shows every integration as not connected), reviewed
+by the user.
+
+## Phase 2 — IBKR read-only integration ✅ (implemented; live auth requires user setup)
+
+**Goal:** real account data, read-only, with honest failure states.
+
+- [x] `IbkrSessionManager`: tickle loop, `/iserver/auth/status` polling,
+      gateway-reachable/connected/authenticated state exposed to System
+      Health and a dedicated `GET /api/v1/integrations/ibkr/status`.
+- [x] `IbkrPortfolioDataSource implements PortfolioDataSource` over the
+      account summary, ledger, and positions endpoints (net liquidation,
+      cash, buying power, excess liquidity, margin, realized/unrealized
+      P&L computed from positions; per-position symbol, quantity, avg
+      cost, current price, market value, unrealized P&L, P&L%, daily
+      change, weight, plus contract id/currency/asset class/sector/
+      country where IBKR provides them).
+- [x] Home, Portfolio, and Position Detail screens driven by this data,
+      each value tagged `source: "IBKR"`, `timestamp`, `status`
+      (live/cached/unavailable — see `docs/IBKR_INTEGRATION.md` §4).
+- [x] Multi-account discovery and per-user selection
+      (`GET`/`POST /api/v1/portfolio/account`), never a hardcoded account
+      ID.
+- [x] 55 unit tests: error classification, mapper fixtures (clearly
+      labeled synthetic data), session/connection-manager state machines
+      via an injected fake HTTP client.
+- [ ] **Live verification against a real IBKR account** — not possible
+      from this sandboxed environment (no outbound access to run/authenticate
+      a real gateway, no browser for the required 2FA login). See
+      `docs/IBKR_INTEGRATION.md` §9 for the exact steps to connect a real
+      account; architecture and code are otherwise complete and tested.
+- Decision point deferred to the user, not decided here: whether to ever
+  adopt an unsupported gateway-login automation tool (e.g. `ibeam`) instead
+  of the manual daily browser login this phase assumes — see
+  `SECURITY.md` §2.
+
+**Exit criteria:** logged-in user with a funded/paper IBKR account sees their
+real positions and account summary in the app, with correct behavior when the
+session expires (visible "re-authenticate" state, no stale/fabricated
+numbers).
+
+## Phase 3 — OpenAI integration and tool calling ✅ (implemented; live testing requires OPENAI_API_KEY)
+
+**Goal:** the AI chat answers questions using the tool functions in
+`ARCHITECTURE.md` §3.4, not a static prompt dump.
+
+- [x] All 11 spec'd tool functions implemented: `getAccountSummary`,
+      `getPositions`, `getPosition`, `getPortfolioAllocation`,
+      `getPortfolioPerformance`, `getMarketData`, `getRecentTrades`,
+      `getOpenOrders`, `getHistoricalPortfolioSnapshots`, `getRiskMetrics`,
+      `getPortfolioContext`. The four that depend on capabilities later
+      phases build (`getRecentTrades`, `getOpenOrders`,
+      `getHistoricalPortfolioSnapshots`, `getRiskMetrics`) are real
+      functions returning an honest `unavailable` envelope — never stubbed
+      with fake data.
+- [x] Tool-calling orchestration loop (`PortfolioAiAgent`) with persisted
+      conversations/messages, capped iterations, provider-agnostic
+      (`AIProvider` interface, `OpenAIProvider` the only implementation).
+- [x] System prompt enforces FACT / CURRENT DATA / ANALYST ESTIMATE / AI
+      INTERPRETATION / SCENARIO / UNCERTAINTY labeling, defaults to Hebrew,
+      and forbids answering current-state questions from memory alone;
+      covered by `system-prompt.test.ts` asserting the rules are present,
+      and `agent.test.ts` asserting the plumbing that carries a tool's
+      honest status/reason to the model is never altered or dropped.
+- [x] Real AI Chat screen: conversation list, message thread, suggested
+      prompts, tool-call transparency badges, mobile-responsive.
+- [ ] **Live verification against a real OpenAI account** — not possible
+      from this sandboxed environment (`OPENAI_API_KEY` unset, confirmed
+      before implementation). See `docs/OPENAI_INTEGRATION.md` §9 for the
+      exact steps to test live; architecture and code are otherwise
+      complete and tested (97 backend tests).
+
+**Exit criteria:** user can ask "what's my AAPL position worth right now"
+and get a correct, tool-sourced answer; asking something outside available
+tools produces an honest "I don't have that yet" rather than a guess. Code
+and tests confirm this mechanically; the live model-behavior confirmation
+is blocked on an API key this environment doesn't have.
+
+## Phase 4 — News and market intelligence ✅ (news implemented; live testing requires FINNHUB_API_KEY)
+
+**Goal, as scoped for this phase:** real, portfolio-aware news, normalized
+into our DB, with deterministic materiality classification — explicitly
+**not** analyst targets/ratings, a catalyst/risk engine, automated alerts,
+trading, or autonomous AI monitoring (all deferred to their own later
+phases per the phase's own instructions).
+
+- [x] Finalized the news vendor decision: **Finnhub** (over FMP — see
+      `docs/NEWS_INTEGRATION.md` §2 for the comparison and pricing).
+- [x] `NewsDataSource` → `NewsService` → `FinnhubNewsProvider` pipeline,
+      reusing/extending the existing `NewsArticle`/`NewsEvent` schema
+      rather than duplicating it (no new `news_items` table — the actual
+      shape differs from this plan's original illustrative columns; see
+      `ARCHITECTURE.md` §6).
+- [x] Deterministic keyword-based categorization + low/medium/high
+      relevance classification (`categorizer.ts`) — no AI/ML and no
+      numeric "investment score", per the phase's explicit instruction.
+- [x] Two-layer deduplication (exact re-fetch idempotency + cross-query
+      near-duplicate detection), source attribution preserved on both
+      sides of a duplicate pair.
+- [x] `publishedAt`/`retrievedAt` tracked separately; `since` window
+      filtering (hour/today/24h/7d/latest).
+- [x] Endpoints: `GET /news`, `/news/:id`, `/news/portfolio`,
+      `/news/portfolio/summary`, `/news/symbol/:symbol`, `/news/recent` —
+      all authenticated, all returning the shared `LiveData<T>` envelope.
+- [x] Real News UI: Latest / Portfolio / By Symbol / Categories tabs, with
+      honest empty/unavailable states and a portfolio-news summary view
+      (real per-symbol counts, only when IBKR is actually connected).
+- [x] 4 AI tools (`getRecentNews`, `getPortfolioNews`, `getNewsForSymbol`,
+      `getMaterialPortfolioUpdates`) added to the Phase 3 tool
+      architecture, calling `NewsDataSource` — never the provider
+      directly.
+- [x] Fixture-based tests: provider abstraction, error classification,
+      normalization, categorization, deduplication, caching (live/cached/
+      unavailable), portfolio-symbol mapping, route auth and 404s — no
+      test pretends a real Finnhub connection exists.
+- [ ] **Live verification against a real Finnhub account** — not possible
+      from this sandboxed environment (`FINNHUB_API_KEY` unset, confirmed
+      before implementation). See `docs/NEWS_INTEGRATION.md` §9 for the
+      exact steps to test live; architecture and code are otherwise
+      complete and tested.
+
+Analyst targets/ratings, earnings calendars, and Catalysts/Targets/Analysts
+screens from this plan's original Phase 4 description were **not** built
+this phase — they remain future work (see Phase 5's risk/catalyst scope
+and beyond), consistent with this phase's own explicit instruction not to
+build them yet.
+
+**Exit criteria:** News screens show real, sourced, timestamped items for
+the user's actual holdings when IBKR and Finnhub are both connected, and
+an honest "not connected" state otherwise — met, pending only the live
+Finnhub key this sandbox doesn't have.
+
+## Phase 5 — Analysts, earnings, catalysts, risk ✅ (implemented; live testing requires FINNHUB_API_KEY)
+
+**Goal:** analyst consensus, earnings dates, portfolio-aware catalysts, and
+deterministic risk metrics grounded in real position data — never a
+fabricated prediction or an arbitrary composite score.
+
+- [x] Vendor decision: **Finnhub**, reusing the same `FINNHUB_API_KEY` as
+      Phase 4's news integration rather than onboarding a second vendor —
+      see `docs/RISK_AND_CATALYSTS.md` §1 for the comparison and pricing.
+- [x] `AnalystDataSource` → `AnalystService` → `FinnhubAnalystProvider`
+      pipeline; deterministic consensus-rating derivation
+      (`deriveConsensusRating`) from strong buy/buy/hold/sell/strong sell
+      counts, never presented as the app's own prediction.
+- [x] `EarningsDataSource` → `EarningsService` → `FinnhubEarningsProvider`
+      pipeline distinguishing estimated/confirmed/actual/unavailable
+      status — never an invented earnings date.
+- [x] Normalized `Catalyst` model/service: a pure aggregator (no vendor of
+      its own) mapping news categories, earnings entries, and analyst
+      revisions into a single portfolio-aware catalyst feed for the
+      watchlist (MSFT, WDC, GFS, CLS, WMT, AVUV, SPMO, VTI, VXUS),
+      idempotent via a `(sourceType, sourceId)` unique constraint.
+- [x] Deterministic risk engine (`domain/risk` /
+      `integrations/risk/risk-engine.ts`): position/sector/country
+      concentration, ETF-vs-equity exposure, cash exposure, top-N and
+      single-name concentration, gross exposure, leverage, margin
+      utilization, unrealized P&L concentration, and 7-day
+      exposure/concentration change (once `PortfolioSnapshot` history
+      exists) — every metric individually measurable, documented (formula/
+      source/timestamp/limitations), with **no arbitrary composite risk
+      score**. A missing input returns `value: null` with an explanation,
+      never a substituted zero.
+- [x] 6 AI tools (`getAnalystData`, `getAnalystRevisions`,
+      `getUpcomingEarnings`, `getPortfolioCatalysts`, `getRiskMetrics`,
+      `getPortfolioRiskSummary`) calling application services only, never
+      Finnhub directly.
+- [x] Endpoints: `GET /analysts`, `/analysts/:symbol`,
+      `/analysts/:symbol/revisions`, `/earnings`, `/earnings/:symbol`,
+      `/catalysts`, `/catalysts/portfolio`, `/risk`, `/risk/summary` — all
+      authenticated, all scoped to the requesting user's own holdings.
+- [x] Real Analysts, Catalysts, Risk, and Targets UI screens with honest
+      empty/unavailable states — no placeholder values.
+- [x] Fixture-based tests: provider abstractions, normalization, consensus
+      derivation, revisions, earnings status, catalyst mapping/dedup, risk
+      calculations (including unavailable-input and never-substitute-zero
+      behavior), timestamps/source attribution, route auth and user
+      isolation, AI tools — no test pretends a real Finnhub connection
+      exists.
+- [ ] **Live verification against a real Finnhub account** — not possible
+      from this sandboxed environment (`FINNHUB_API_KEY` unset, confirmed
+      before implementation). See `docs/RISK_AND_CATALYSTS.md` §7 for the
+      exact steps to test live; architecture and code are otherwise
+      complete and tested.
+
+**Exit criteria:** risk page explains *why* something is flagged as risky
+using the user's real concentration/exposure numbers — met, pending only the
+live Finnhub key this sandbox doesn't have.
+
+## Phase 6 — Monitoring and alerts ✅ (implemented; live monitoring requires IBKR/Finnhub/OpenAI credentials)
+
+**Goal:** the system watches itself and the portfolio without the user
+having to ask — deterministic detection and notification only, never
+autonomous trading or order placement.
+
+- [x] `AlertEngine` (Scheduler → data refresh → change detection →
+      materiality rules → `AlertEngine` → `Alert` → UI/notification layer)
+      reusing the existing `Alert` model (extended, not duplicated) plus a
+      new `AlertRule` model for per-user configuration.
+- [x] 14 alert categories (significant price movement, portfolio P&L
+      change, high-relevance news, earnings approaching/released, analyst
+      target revision, analyst rating change, major catalyst,
+      concentration change, margin/liquidity threshold, unusual exposure
+      change, data connection failure, stale data, IBKR connection status
+      change) — 12 rule-gated behind an explicit opt-in `AlertRule`, plus 2
+      always-on connectivity detectors (`DATA_CONNECTION_FAILURE`,
+      `IBKR_CONNECTION_STATUS`) that run for every user regardless of
+      configuration.
+- [x] User-configurable rules: enabled/disabled, symbol, category,
+      threshold, severity, cooldown minutes, in-app notification
+      preference — conservative defaults, no spamming.
+- [x] Deduplication/cooldown via a single `raise()` method and a
+      `dedupeKey` (threshold-style `"{CATEGORY}:{symbol}"`, event-style
+      `"{CATEGORY}:{entityId}"`), tracking first-detected/last-detected/
+      notification-state so the same underlying event doesn't re-alert
+      every refresh cycle.
+- [x] `Scheduler`/job abstraction (persistent-process, self-rescheduling
+      per job with capped exponential backoff on failure — not
+      serverless/cron) with 5 jobs: `refreshNews`, `refreshMarketData`,
+      `refreshPortfolioState`, `refreshAnalystData`/`refreshEarnings`
+      (combined), and `evaluateAlerts`; configurable refresh intervals,
+      respecting provider rate limits.
+- [x] Explicit sandbox honesty: no live IBKR/OpenAI/Finnhub credentials in
+      this environment, so all 5 jobs safely no-op with zero authenticated
+      users/configured providers — no fake background data, no simulated
+      live alerts; every test uses deterministic fixtures.
+- [x] Updates/Alerts UI distinguishing NEW/READ/ACKNOWLEDGED, showing
+      severity, timestamp, source, symbol, event type, explanation, and a
+      link to source where applicable — portfolio-specific to the
+      authenticated user.
+- [x] `NotificationProvider` abstraction; `InAppNotificationProvider` is
+      the only real implementation (writes a `SystemEvent`), with no
+      pretense that email/push exist yet.
+- [x] Detection is 100% deterministic — `AlertEngine` never makes an LLM
+      call as part of a scheduled polling cycle. 4 AI tools
+      (`getActiveAlerts`, `getRecentAlerts`, `getAlertHistory`,
+      `getMonitoringStatus`) let the AI explain alerts but never create or
+      modify alert configuration.
+- [x] `SystemEventLogger` reuses the pre-existing `SystemEvent` model for
+      job started/completed/failed, provider-unavailable, alert-generated,
+      and alert-suppressed-by-cooldown events — no secrets logged.
+- [x] System Health page fully real across all seven components (IBKR,
+      OpenAI, Market Data, News, Analyst & Earnings Data, Database,
+      Scheduled Jobs) with accurate Operational/Degraded/Failed/
+      Not-configured states.
+- [x] Fixture-based tests: scheduler backoff timing (fake timers), job
+      execution/no-op behavior, cooldown/dedup (including against a real
+      Postgres instance with the actual always-on detectors), thresholds,
+      user isolation, authentication, unavailable-provider states, and API
+      endpoints — no test fakes a live provider connection.
+
+**Exit criteria:** killing/degrading an integration in a test environment is
+visibly reflected in System Health and triggers the right alert, not
+silence — met and tested with deterministic fixtures; the live "system
+continuously monitors a real portfolio" experience is blocked on the same
+IBKR/OpenAI/Finnhub credentials the earlier phases lack in this sandbox.
+
+## Phase 7 — Trading with explicit confirmation
+
+**Goal:** controlled order placement, never silent.
+
+- Extend `PortfolioDataSource` (or a sibling `OrderGateway`) to submit
+  BUY/SELL/CLOSE/MODIFY/CANCEL through IBKR's order endpoints.
+- Every order requires an explicit, itemized confirmation step in the UI
+  (symbol, side, quantity, order type, estimated cost/proceeds) before
+  submission; nothing fires automatically.
+- Orders/trades persisted with full audit trail (`orders`, `trades`,
+  `system_events`).
+
+**Exit criteria:** placing a real order (starting in an IBKR paper account)
+matches exactly what the user confirmed, with a complete audit trail.
+
+## Cross-cutting, every phase
+
+- No fake/hardcoded portfolio numbers land in the app at any point — the
+  Phase 0/1 watchlist tickers (AVUV, CLS, FPS, GFS, MSFT, SPMO, VTI, VXUS,
+  WDC, WMT) are dev-time symbols to exercise news/market-data code paths,
+  never a stand-in for real positions.
+- Every live-data UI element carries source/timestamp/status.
+- Security review (see `SECURITY.md`) before each phase that touches
+  credentials or trading is considered done.

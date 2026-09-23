@@ -1,0 +1,24 @@
+[
+  {
+    "id": 8001,
+    "category": "general",
+    "datetime": 1732104600,
+    "headline": "Federal Reserve signals possible interest rate cut amid cooling inflation",
+    "image": "",
+    "related": "",
+    "source": "Bloomberg",
+    "summary": "Fed officials pointed to slowing inflation data as a reason to consider easing policy.",
+    "url": "https://example.com/fed-rate-cut"
+  },
+  {
+    "id": 8002,
+    "category": "general",
+    "datetime": 1732018200,
+    "headline": "Markets close mixed as investors weigh earnings season",
+    "image": "",
+    "related": "",
+    "source": "Associated Press",
+    "summary": "",
+    "url": "https://example.com/markets-mixed"
+  }
+]

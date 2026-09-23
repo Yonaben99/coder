@@ -1,0 +1,13 @@
+export type { NewsErrorCode } from "./errors.js";
+export { NewsError, classifyNewsError } from "./errors.js";
+export type { NewsHttpClient } from "./client.js";
+export { FinnhubHttpClient } from "./client.js";
+export type { NewsProvider } from "./news-provider.js";
+export { FinnhubNewsProvider } from "./finnhub-provider.js";
+export { classifyNewsText } from "./categorizer.js";
+export type { NormalizedArticle } from "./normalizer.js";
+export { normalizeFinnhubArticle } from "./normalizer.js";
+export { normalizeUrlForDedup, isLikelyDuplicate } from "./dedup.js";
+export { NewsService } from "./news-service.js";
+export { NewsIntegrationDataSource } from "./news-integration-data-source.js";
+export { NotConnectedNewsDataSource } from "./not-connected-news-data-source.js";

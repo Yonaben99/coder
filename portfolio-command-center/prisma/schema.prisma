@@ -1,0 +1,579 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Users, sessions ──────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  totpSecret   String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  sessions           Session[]
+  ibkrConnection     IBKRConnection?
+  portfolioSnapshots PortfolioSnapshot[]
+  alertRules         AlertRule[]
+  alerts             Alert[]
+  aiConversations    AIConversation[]
+  orderSnapshots     OrderSnapshot[]
+  auditLogs          AuditLog[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ── IBKR connection metadata only — never credentials (see SECURITY.md) ──
+
+enum IBKRConnectionStatus {
+  NOT_CONNECTED
+  CONNECTED
+  AUTHENTICATED
+  SESSION_EXPIRED
+  FAILED
+}
+
+model IBKRConnection {
+  id                  String               @id @default(cuid())
+  userId              String               @unique
+  user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status              IBKRConnectionStatus @default(NOT_CONNECTED)
+  gatewayBaseUrl      String?
+  /// Which IBKR account this user has chosen to view, when the session exposes more than one. Never a credential.
+  selectedAccountId   String?
+  lastAuthenticatedAt DateTime?
+  lastCheckedAt       DateTime?
+  lastErrorMessage    String?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+}
+
+// ── Instruments and snapshots ────────────────────────────────────────────
+
+model Instrument {
+  id         String   @id @default(cuid())
+  symbol     String   @unique
+  name       String?
+  sector     String?
+  assetClass String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  positionSnapshots   PositionSnapshot[]
+  marketDataSnapshots MarketDataSnapshot[]
+  newsArticles        NewsArticle[]
+  analystEstimates    AnalystEstimate[]
+  analystRevisions    AnalystRevision[]
+  earnings            Earnings[]
+  catalysts           Catalyst[]
+  orderSnapshots      OrderSnapshot[]
+  tradeSnapshots      TradeSnapshot[]
+
+  @@index([symbol])
+}
+
+model PortfolioSnapshot {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  takenAt         DateTime @default(now())
+  netLiquidation  Decimal? @db.Decimal(18, 2)
+  cash            Decimal? @db.Decimal(18, 2)
+  buyingPower     Decimal? @db.Decimal(18, 2)
+  excessLiquidity Decimal? @db.Decimal(18, 2)
+  margin          Decimal? @db.Decimal(18, 2)
+  realizedPnl     Decimal? @db.Decimal(18, 2)
+  unrealizedPnl   Decimal? @db.Decimal(18, 2)
+  dailyPnl        Decimal? @db.Decimal(18, 2)
+  source          String
+  createdAt       DateTime @default(now())
+
+  positions PositionSnapshot[]
+
+  @@index([userId, takenAt])
+}
+
+model PositionSnapshot {
+  id            String            @id @default(cuid())
+  snapshotId    String
+  snapshot      PortfolioSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  instrumentId  String
+  instrument    Instrument        @relation(fields: [instrumentId], references: [id])
+  quantity      Decimal           @db.Decimal(18, 6)
+  averageCost   Decimal?          @db.Decimal(18, 6)
+  marketPrice   Decimal?          @db.Decimal(18, 6)
+  marketValue   Decimal?          @db.Decimal(18, 2)
+  unrealizedPnl Decimal?          @db.Decimal(18, 2)
+  dailyChange   Decimal?          @db.Decimal(18, 6)
+  weight        Decimal?          @db.Decimal(9, 6)
+  createdAt     DateTime          @default(now())
+
+  @@index([snapshotId])
+  @@index([instrumentId])
+}
+
+model MarketDataSnapshot {
+  id           String     @id @default(cuid())
+  instrumentId String
+  instrument   Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+  price        Decimal?   @db.Decimal(18, 6)
+  volume       BigInt?
+  fetchedAt    DateTime   @default(now())
+  source       String
+  payload      Json?
+
+  @@index([instrumentId, fetchedAt])
+}
+
+// ── News ──────────────────────────────────────────────────────────────────
+
+enum NewsEventType {
+  EARNINGS
+  GUIDANCE
+  MERGER_ACQUISITION
+  REGULATION
+  LITIGATION
+  MANAGEMENT_CHANGE
+  PRODUCT
+  CAPITAL_ALLOCATION
+  BUYBACK
+  DIVIDEND
+  FINANCING
+  SUPPLY_CHAIN
+  CUSTOMER
+  PARTNERSHIP
+  MACRO
+  ANALYST_ACTION
+  PRICE_MOVEMENT
+  CONTRACT
+  OTHER
+}
+
+/// Deterministic information-relevance signal, not an investment recommendation.
+enum RelevanceLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum NewsArticleStatus {
+  ACTIVE
+  DUPLICATE
+}
+
+model NewsArticle {
+  id           String      @id @default(cuid())
+  instrumentId String?
+  instrument   Instrument? @relation(fields: [instrumentId], references: [id])
+  /// All ticker symbols this article mentions/relates to (uppercased), for portfolio matching — see docs/NEWS_INTEGRATION.md §6.
+  relatedSymbols String[]  @default([])
+  headline     String
+  summary      String?
+  /// Original publisher (e.g. "Reuters") — distinct from `provider`, which is the API we fetched it through.
+  source       String
+  url          String
+  publishedAt  DateTime
+  /// When our own system first/last confirmed this article via the provider — distinct from publishedAt.
+  retrievedAt  DateTime    @default(now())
+  relevance    RelevanceLevel?
+  /// Which news API this row came from (e.g. "finnhub") — see NewsProvider in apps/api/src/integrations/news/.
+  provider     String
+  /// The provider's own article id, used with `provider` for idempotent upserts (re-fetching the same article never creates a duplicate row).
+  externalId   String?
+  status       NewsArticleStatus @default(ACTIVE)
+  duplicateOfId String?
+  duplicateOf  NewsArticle? @relation("ArticleDuplicates", fields: [duplicateOfId], references: [id])
+  duplicates   NewsArticle[] @relation("ArticleDuplicates")
+  createdAt    DateTime    @default(now())
+
+  events NewsEvent[]
+
+  @@unique([provider, externalId])
+  @@index([instrumentId, publishedAt])
+  @@index([publishedAt])
+}
+
+model NewsEvent {
+  id        String        @id @default(cuid())
+  articleId String
+  article   NewsArticle   @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  eventType NewsEventType
+  createdAt DateTime      @default(now())
+
+  @@index([articleId])
+}
+
+// ── Analysts (Phase 5) ───────────────────────────────────────────────────
+//
+// `source` is the original data owner (e.g. "Finnhub consensus"); `provider`
+// is which API we fetched it through — same distinction NewsArticle makes,
+// see docs/NEWS_INTEGRATION.md §4. `provider`+`externalId` gives idempotent
+// upserts on re-fetch, same pattern as NewsArticle.
+
+model AnalystEstimate {
+  id              String     @id @default(cuid())
+  instrumentId    String
+  instrument      Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+  averageTarget   Decimal?   @db.Decimal(18, 4)
+  highTarget      Decimal?   @db.Decimal(18, 4)
+  lowTarget       Decimal?   @db.Decimal(18, 4)
+  consensusRating String?
+  analystCount    Int?
+  source          String
+  provider        String
+  externalId      String?
+  asOf            DateTime
+  retrievedAt     DateTime   @default(now())
+  createdAt       DateTime   @default(now())
+
+  @@unique([provider, externalId])
+  @@index([instrumentId, asOf])
+}
+
+model AnalystRevision {
+  id            String     @id @default(cuid())
+  instrumentId  String
+  instrument    Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+  firm          String?
+  previousValue String?
+  newValue      String?
+  ratingChange  String?
+  source        String
+  provider      String
+  externalId    String?
+  revisedAt     DateTime
+  retrievedAt   DateTime   @default(now())
+  createdAt     DateTime   @default(now())
+
+  @@unique([provider, externalId])
+  @@index([instrumentId, revisedAt])
+}
+
+// ── Earnings (Phase 5) ───────────────────────────────────────────────────
+
+enum EarningsStatus {
+  /// Reporting date and/or figures are forecast, not confirmed by the company.
+  ESTIMATED
+  /// The reporting date itself is confirmed (e.g. company-announced), figures still forecast.
+  CONFIRMED
+  /// The company has actually reported — actualEps/actualRevenue populated.
+  ACTUAL
+}
+
+model Earnings {
+  id                 String         @id @default(cuid())
+  instrumentId       String
+  instrument         Instrument     @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+  /// e.g. "Q3 2026" — provider-reported fiscal period label.
+  period             String?
+  reportDate         DateTime?
+  /// "bmo" (before market open) / "amc" (after market close) / "dmh" (during market hours), when the provider reports it.
+  announcementTiming String?
+  estimatedEps       Decimal?       @db.Decimal(18, 4)
+  estimatedRevenue   Decimal?       @db.Decimal(20, 2)
+  actualEps          Decimal?       @db.Decimal(18, 4)
+  actualRevenue      Decimal?       @db.Decimal(20, 2)
+  status             EarningsStatus @default(ESTIMATED)
+  source             String
+  provider           String
+  externalId         String?
+  retrievedAt        DateTime       @default(now())
+  createdAt          DateTime       @default(now())
+
+  @@unique([provider, externalId])
+  @@index([instrumentId, reportDate])
+}
+
+// ── Catalysts (Phase 5) ──────────────────────────────────────────────────
+
+enum CatalystType {
+  EARNINGS
+  GUIDANCE
+  PRODUCT_LAUNCH
+  MAJOR_CONTRACT
+  REGULATORY_EVENT
+  MERGER_ACQUISITION
+  INVESTOR_DAY
+  CAPITAL_ALLOCATION
+  LEGAL_REGULATORY_DECISION
+  ANALYST_REVISION
+  OTHER
+}
+
+enum CatalystStatus {
+  UPCOMING
+  COMPLETED
+}
+
+/// Which subsystem generated this catalyst — lets refresh jobs upsert idempotently via (sourceType, sourceId) instead of duplicating a catalyst every cycle.
+enum CatalystSourceType {
+  NEWS
+  EARNINGS
+  ANALYST_REVISION
+  MANUAL
+}
+
+model Catalyst {
+  id            String              @id @default(cuid())
+  instrumentId  String?
+  instrument    Instrument?         @relation(fields: [instrumentId], references: [id])
+  type          CatalystType        @default(OTHER)
+  title         String
+  description   String
+  expectedDate  DateTime?
+  /// Whether expectedDate is a company-confirmed date vs. an estimate/inference — see docs/RISK_AND_CATALYSTS.md.
+  dateConfirmed Boolean             @default(false)
+  status        CatalystStatus      @default(UPCOMING)
+  relevance     RelevanceLevel?
+  source        String?
+  url           String?
+  publishedAt   DateTime?
+  retrievedAt   DateTime            @default(now())
+  sourceType    CatalystSourceType  @default(MANUAL)
+  sourceId      String?
+  createdAt     DateTime            @default(now())
+
+  @@unique([sourceType, sourceId])
+  @@index([instrumentId, expectedDate])
+}
+
+// ── Alerts (Phase 6) ─────────────────────────────────────────────────────
+
+enum AlertCategory {
+  PRICE_MOVEMENT
+  PNL_CHANGE
+  HIGH_RELEVANCE_NEWS
+  EARNINGS_APPROACHING
+  EARNINGS_RELEASED
+  ANALYST_TARGET_REVISION
+  ANALYST_RATING_CHANGE
+  MAJOR_CATALYST
+  CONCENTRATION_CHANGE
+  MARGIN_LIQUIDITY_THRESHOLD
+  EXPOSURE_CHANGE
+  DATA_CONNECTION_FAILURE
+  STALE_DATA
+  IBKR_CONNECTION_STATUS
+}
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+/// The user's read/triage state for one alert instance — separate from `status`, which tracks whether the underlying condition is still active.
+enum AlertReadState {
+  NEW
+  READ
+  ACKNOWLEDGED
+}
+
+/// User-configurable monitoring rule (Phase 6.3). One rule can produce many Alert instances over time.
+model AlertRule {
+  id              String        @id @default(cuid())
+  userId          String
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category        AlertCategory
+  /// null = portfolio-wide rule (e.g. margin threshold); set = single-symbol rule.
+  symbol          String?
+  enabled         Boolean       @default(true)
+  threshold       Decimal?      @db.Decimal(18, 6)
+  severity        AlertSeverity @default(WARNING)
+  /// Minimum minutes between two alerts from this rule for the same dedupe key — see AlertEngine (docs/ALERTS_AND_MONITORING.md).
+  cooldownMinutes Int           @default(60)
+  notifyInApp     Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  alerts Alert[]
+
+  @@index([userId, category])
+}
+
+enum AlertStatus {
+  ACTIVE
+  TRIGGERED
+  DISMISSED
+}
+
+/// One detected occurrence of an alert condition. `condition` is the original Phase-1 field, reused (not duplicated) to hold the structured detection payload (threshold/actualValue/previousValue).
+model Alert {
+  id              String         @id @default(cuid())
+  userId          String
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ruleId          String?
+  rule            AlertRule?     @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  category        AlertCategory
+  symbol          String?
+  severity        AlertSeverity  @default(WARNING)
+  title           String
+  explanation     String
+  sourceUrl       String?
+  condition       Json
+  status          AlertStatus    @default(ACTIVE)
+  readState       AlertReadState @default(NEW)
+  /// Cooldown/dedup key (e.g. "PRICE_MOVEMENT:WDC"). A re-detection within the rule's cooldown window updates lastDetectedAt on the existing row instead of creating a new one — see docs/ALERTS_AND_MONITORING.md §4.
+  dedupeKey       String
+  firstDetectedAt DateTime       @default(now())
+  lastDetectedAt  DateTime       @default(now())
+  triggeredAt     DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([userId, status])
+  @@index([userId, dedupeKey])
+  @@index([userId, readState])
+}
+
+// ── AI ────────────────────────────────────────────────────────────────────
+
+model AIConversation {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages AIMessage[]
+  analyses AIAnalysis[]
+
+  @@index([userId])
+}
+
+enum AIMessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+  TOOL
+}
+
+model AIMessage {
+  id             String         @id @default(cuid())
+  conversationId String
+  conversation   AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           AIMessageRole
+  content        String
+  toolCalls      Json?
+  createdAt      DateTime       @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+enum AIAnalysisKind {
+  FACT
+  ANALYST_ESTIMATE
+  AI_INTERPRETATION
+  SCENARIO
+  UNCERTAINTY
+}
+
+model AIAnalysis {
+  id             String         @id @default(cuid())
+  conversationId String
+  conversation   AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  kind           AIAnalysisKind
+  content        String
+  createdAt      DateTime       @default(now())
+
+  @@index([conversationId])
+}
+
+// ── Orders / trades (Phase 7, schema only for now) ──────────────────────
+
+enum OrderStatus {
+  DRAFT
+  PENDING_CONFIRMATION
+  SUBMITTED
+  FILLED
+  PARTIALLY_FILLED
+  CANCELLED
+  REJECTED
+}
+
+enum OrderSide {
+  BUY
+  SELL
+}
+
+model OrderSnapshot {
+  id           String        @id @default(cuid())
+  userId       String
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  instrumentId String
+  instrument   Instrument    @relation(fields: [instrumentId], references: [id])
+  side         OrderSide
+  quantity     Decimal       @db.Decimal(18, 6)
+  orderType    String
+  status       OrderStatus   @default(DRAFT)
+  ibkrOrderId  String?
+  confirmedAt  DateTime?
+  submittedAt  DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  trades TradeSnapshot[]
+
+  @@index([userId, status])
+}
+
+model TradeSnapshot {
+  id           String        @id @default(cuid())
+  orderId      String
+  order        OrderSnapshot @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  instrumentId String
+  instrument   Instrument    @relation(fields: [instrumentId], references: [id])
+  quantity     Decimal       @db.Decimal(18, 6)
+  price        Decimal       @db.Decimal(18, 6)
+  executedAt   DateTime
+  createdAt    DateTime      @default(now())
+
+  @@index([orderId])
+}
+
+// ── System / audit ───────────────────────────────────────────────────────
+
+enum SystemEventLevel {
+  INFO
+  WARN
+  ERROR
+}
+
+model SystemEvent {
+  id        String           @id @default(cuid())
+  component String
+  level     SystemEventLevel
+  message   String
+  metadata  Json?
+  createdAt DateTime         @default(now())
+
+  @@index([component, createdAt])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  action     String
+  targetType String?
+  targetId   String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
+}

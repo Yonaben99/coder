@@ -1,0 +1,42 @@
+# Secrets
+.env
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build output
+.next/
+dist/
+build/
+out/
+
+# Prisma
+packages/db/generated/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+coverage/
+
+# Editor / OS
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Local IBKR Client Portal Gateway runtime
+ibkr-gateway/*.jar
+ibkr-gateway/runtime/
+
+# Misc
+*.tsbuildinfo
+.turbo/
