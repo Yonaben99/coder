@@ -256,7 +256,78 @@ Full detail, including provider selection/pricing, the classification rule
 table, deduplication design, caching policy, and known limitations:
 `docs/NEWS_INTEGRATION.md`.
 
-### 3.6 Database
+### 3.6 Analysts, earnings, catalysts, risk layer
+
+**Implemented in Phase 5** — `apps/api/src/integrations/{analyst,earnings,catalysts,risk}/`:
+
+- `analyst/` and `earnings/` each follow the exact same
+  provider/errors/client/service/data-source module shape as `news/`
+  (§3.5), reusing the Phase 4 Finnhub vendor and `FINNHUB_API_KEY` rather
+  than onboarding a second one. `AnalystProvider`/`EarningsProvider` are
+  their own vendor-agnostic interfaces — a future vendor swap means
+  writing one new class per module, same pattern as every prior
+  integration.
+- `catalysts/` (`CatalystService`) is a deterministic aggregator, not a
+  vendor-backed data source: it depends only on the existing
+  `NewsDataSource`/`AnalystDataSource`/`EarningsDataSource` interfaces and
+  maps their already-normalized output into the shared `Catalyst` model
+  (idempotent via a `(sourceType, sourceId)` unique constraint).
+- `risk/` (`RiskService` + pure functions in `risk-engine.ts`) computes
+  every metric from `Position[]`/`AccountSummary` already returned by the
+  existing `PortfolioDataSource` — no vendor call of its own. Each metric
+  is individually documented (formula/source/severity), never an
+  arbitrary composite score. Two metrics
+  (`exposure_change_7d`/`concentration_change_7d`) depend on
+  `PortfolioSnapshot` history written by the Phase 6 scheduler (§3.7) —
+  honestly `unavailable` until that history exists.
+- 6 AI tools (`getAnalystData`, `getAnalystRevisions`,
+  `getUpcomingEarnings`, `getPortfolioCatalysts`, `getRiskMetrics`,
+  `getPortfolioRiskSummary`), added the same way every other tool is.
+
+Full detail, including the provider decision, the catalyst-type mapping
+table, the risk-metric formula table, and known limitations (notably the
+ETF-vs-equity heuristic):
+`docs/RISK_AND_CATALYSTS.md`.
+
+### 3.7 Alerts and monitoring layer
+
+**Implemented in Phase 6** — `apps/api/src/integrations/{scheduler,alerts}/`:
+
+- `scheduler/` (`Scheduler`) — a persistent-process scheduler (this
+  backend is already a long-running process for the IBKR keep-alive, §3.2;
+  jobs are additive, not a new deployment shape). Each job
+  self-reschedules via `setTimeout` rather than a fixed `setInterval`, so
+  a failing job's own interval backs off (capped doubling) without
+  affecting any other job. `buildJobs()` (`jobs.ts`) defines five jobs —
+  refresh news/analyst-data/earnings for the union of every authenticated
+  user's held symbols, write portfolio snapshots, and evaluate alerts —
+  each a thin wrapper around existing Phase 2-5 services, never a vendor
+  call of its own.
+- `alerts/` (`AlertEngine` + `AlertService`) — `AlertEngine` is
+  deterministic detection only (no LLM call anywhere in it): one detector
+  function per alert category, each reading an existing `*DataSource`
+  interface. Cooldown/deduplication lives in one `raise()` method shared
+  by every category — a per-alert `dedupeKey` and the rule's
+  `cooldownMinutes` decide whether a detection creates a new `Alert` row,
+  updates an existing one in place, or is silently suppressed.
+  `AlertService` is the separate read/write side routes and AI tools
+  depend on; it never runs a detector itself.
+- `NotificationProvider` (interface) → `InAppNotificationProvider` (the
+  only implemented channel — the `Alert` row itself is the in-app
+  notification; email/push are documented as not built, not silently
+  assumed).
+- Every scheduler/alert action logs a `SystemEvent` (§3.10) — job
+  started/completed/failed, alert generated/re-triggered/suppressed.
+- 4 AI tools (`getActiveAlerts`, `getRecentAlerts`, `getAlertHistory`,
+  `getMonitoringStatus`) — read-only; no tool exists for the AI to create,
+  edit, or delete an alert rule, so this is enforced architecturally, not
+  just by the system prompt.
+
+Full detail, including the job/interval table, the full alert-category →
+detector table, the cooldown/dedup mechanism, and known limitations:
+`docs/ALERTS_AND_MONITORING.md`.
+
+### 3.8 Database
 
 - **PostgreSQL.** Relational integrity fits this domain well (users →
   accounts → positions/snapshots/orders, all with clear foreign keys and the
@@ -267,7 +338,7 @@ table, deduplication design, caching policy, and known limitations:
   volume grows enough to matter, TimescaleDB can be added later without a
   schema rewrite (it layers onto Postgres).
 
-### 3.7 Authentication & authorization
+### 3.9 Authentication & authorization
 
 - Single-tenant today, but modeled as multi-user from the start (a `users`
   table, session table, per-user IBKR connection) since retrofitting auth is
@@ -278,19 +349,26 @@ table, deduplication design, caching policy, and known limitations:
 - Authorization is checked per-request in the backend (not just hidden UI) —
   every route validates the session belongs to the resource's owner.
 
-### 3.8 Monitoring / System Health
+### 3.10 Monitoring / System Health
 
-- Each integration (IBKR, OpenAI, market data, news, database, scheduled
-  jobs) has a real health-check function the System Health page calls, not a
-  hardcoded "Connected". Status is one of `Operational` / `Degraded` /
-  `Failed`, cached briefly (a few seconds) to avoid hammering upstream APIs on
-  every page load.
+- Each integration (IBKR, OpenAI, market data, news, analysts/earnings,
+  database, scheduled jobs) has a real health-check function the System
+  Health page calls, not a hardcoded "Connected". Status is one of
+  `Operational` / `Degraded` / `Failed`, computed from real state on each
+  request (IBKR/OpenAI/news/analyst report their own last-call outcome;
+  scheduled jobs — **implemented in Phase 6** — report the real
+  `Scheduler` state: `operational` while running with no job error,
+  `degraded` if a job's last run failed, `failed` if the scheduler isn't
+  running at all).
 - Structured logging (pino) with secret redaction built into the logger
-  config, not left to call-site discipline.
-- Error tracking (Sentry or equivalent) — decide provider with the user
-  before Phase 6; not required for Phase 0.
+  config, not left to call-site discipline. Scheduler/alert-engine actions
+  additionally write a durable `SystemEvent` row (§3.7) — job
+  started/completed/failed, alert generated/suppressed — queryable
+  independent of log retention.
+- Error tracking (Sentry or equivalent) — not yet wired; a Phase 7
+  production-hardening concern, not required for the current phases.
 
-### 3.9 Deployment
+### 3.11 Deployment
 
 - Both the backend (with its IBKR Gateway sidecar) and Postgres need to run
   somewhere as long-lived containers — a VPS, Fly.io, Railway, or similar.
@@ -327,8 +405,11 @@ table, deduplication design, caching policy, and known limitations:
 - OpenAI tool functions call into `domain/`, not the other way around, so
   switching the transport (raw `tools` API today, MCP later) only touches
   `integrations/openai`.
-- The job scheduler is defined by an interface so `node-cron` can become
-  BullMQ + Redis without changing what the jobs do.
+- The job scheduler (`Scheduler`, **implemented Phase 6**) exposes jobs as
+  plain `{name, intervalMinutes, run}` definitions independent of its own
+  self-rescheduling `setTimeout` mechanism, so swapping to a durable queue
+  (BullMQ + Redis) for a multi-instance deployment means changing the
+  scheduler's internals, not any job's `run()` body.
 - The market-intelligence vendor is behind an interface so FMP, Finnhub, or a
   second provider for redundancy can be swapped or added without touching
   `domain/` or the AI tools.
@@ -355,18 +436,41 @@ Matches the spec's list; columns are illustrative, not final DDL:
   (low/medium/high), status (active/duplicate), duplicate_of_id
 - `news_events` (actual model: `NewsEvent`) — id, article_id, event_type
   (one row per matched category; an article can match more than one)
-- `analyst_estimates` / `analyst_revisions` — id, instrument_id, target,
-  rating, previous_value, new_value, source, dated_at
-- `earnings` — id, instrument_id, period, date, estimate_eps, actual_eps
-- `catalysts` — id, instrument_id (nullable), description, expected_date
-- `alerts` — id, user_id, condition, status, triggered_at
+- `analyst_estimates` / `analyst_revisions` (**implemented, Phase 5** —
+  actual models: `AnalystEstimate`/`AnalystRevision`) — id, instrument_id,
+  target/rating fields, provider, external_id (unique with provider),
+  source, as_of/revised_at, retrieved_at
+- `earnings` (**implemented, Phase 5** — actual model: `Earnings`) — id,
+  instrument_id, period, report_date, announcement_timing, estimated/actual
+  eps and revenue, status (estimated/confirmed/actual), provider,
+  external_id (unique with provider), retrieved_at
+- `catalysts` (**implemented, Phase 5** — actual model: `Catalyst`,
+  extended beyond the original illustrative columns) — id, instrument_id
+  (nullable), type, title, description, expected_date, date_confirmed,
+  status (upcoming/completed), relevance, source, url, published_at,
+  retrieved_at, source_type + source_id (unique together — idempotent
+  upsert from news/earnings/analyst-revision events, see
+  `docs/RISK_AND_CATALYSTS.md` §2)
+- `alert_rules` (**implemented, Phase 6** — actual model: `AlertRule`, new
+  this phase) — id, user_id, category, symbol (nullable = portfolio-wide),
+  enabled, threshold, severity, cooldown_minutes, notify_in_app
+- `alerts` (**implemented, Phase 6** — actual model: `Alert`, extended
+  from the Phase 1 scaffold) — id, user_id, rule_id (nullable), category,
+  symbol, severity, title, explanation, source_url, condition (json —
+  the original scaffolded field, reused to hold structured
+  threshold/actual-value data), status, read_state (new/read/
+  acknowledged), dedupe_key, first_detected_at, last_detected_at,
+  triggered_at
 - `ai_conversations` / `ai_messages` — id, user_id, role, content, tool_calls,
   created_at
 - `ai_analyses` — id, conversation_id, kind (FACT/ESTIMATE/SCENARIO/…),
   content
 - `orders` / `trades` — id, user_id, instrument_id, side, quantity, status,
   ibkr_order_id, confirmed_at, submitted_at (Phase 7)
-- `system_events` — id, component, level, message, created_at (audit log)
+- `system_events` (**implemented, Phase 6** — actual model: `SystemEvent`,
+  Phase 1 scaffold, first populated this phase) — id, component, level,
+  message, metadata, created_at (audit log for the scheduler and alert
+  engine)
 
 ## 7. Sources
 

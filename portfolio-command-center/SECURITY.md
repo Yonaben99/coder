@@ -1,8 +1,9 @@
 # Security — Portfolio Command Center
 
-Status: Phases 1-4 implemented (auth, IBKR read-only, Portfolio AI, news).
-This document sets the rules the implementation follows; where a rule is
-now backed by real code, that's called out inline.
+Status: Phases 1-6 implemented (auth, IBKR read-only, Portfolio AI, news,
+analysts/earnings/catalysts/risk, alerts and monitoring). This document
+sets the rules the implementation follows; where a rule is now backed by
+real code, that's called out inline.
 
 ## 1. Secrets
 
@@ -28,6 +29,12 @@ now backed by real code, that's called out inline.
   once in `config.ts`, passed only to `FinnhubNewsProvider`'s constructor,
   never returned by any route, never logged, never written to Postgres.
   See `docs/NEWS_INTEGRATION.md` §10.
+- Phase 5's analyst/earnings integrations reuse the same
+  `FINNHUB_API_KEY` and the same rule — passed only into
+  `FinnhubAnalystProvider`/`FinnhubEarningsProvider`'s constructors, never
+  logged or persisted. See `docs/RISK_AND_CATALYSTS.md` §7. Phase 6's
+  scheduler and alert engine introduce no new secret at all — every
+  service they call already owns its own credential handling.
 
 ## 2. IBKR credentials — the hard constraint
 
@@ -100,6 +107,16 @@ Rules that follow from this:
   every other route; `getPortfolioNews`/`getPortfolioNewsSummary` are scoped
   to the requesting user's own IBKR holdings — never another user's. See
   `docs/NEWS_INTEGRATION.md` §10.
+- Alert and monitoring endpoints (`/api/v1/alerts*`, `/api/v1/alert-rules*`,
+  `/api/v1/monitoring/status`) require the same authenticated session as
+  every other route; every query and mutation is scoped to
+  `request.user.id` — a user can only read or configure their own alerts
+  and alert rules, never another user's. `AlertEngine` detection itself is
+  fully deterministic (threshold/rule evaluation over already-fetched
+  portfolio, market, news, analyst, and earnings data) — it never makes an
+  LLM call as part of a scheduled polling cycle, so the automated alert
+  pipeline has no prompt-injection surface. See
+  `docs/ALERTS_AND_MONITORING.md` §11.
 
 ## 5. Trading safety (Phase 7, not before)
 
@@ -128,7 +145,13 @@ Rules that follow from this:
 
 - `system_events` captures integration state changes (IBKR
   connected/authenticated transitions, job failures, AI tool-call errors) so
-  "what happened and when" is reconstructable without guessing.
+  "what happened and when" is reconstructable without guessing. As of
+  Phase 6 this is real and populated, not aspirational: `SystemEventLogger`
+  (`apps/api/src/integrations/scheduler/system-event-logger.ts`) writes a
+  row for every job started/completed/failed, provider-unavailable
+  condition, alert generated, and alert suppressed-by-cooldown event —
+  see `docs/ALERTS_AND_MONITORING.md` §9 for the exact event types and
+  payload shapes.
 - AI conversations and their tool calls are persisted (`ai_conversations`,
   `ai_messages`) so any AI-influenced decision can be traced back to the
   exact data the model was given.

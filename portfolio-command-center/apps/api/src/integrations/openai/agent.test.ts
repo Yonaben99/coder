@@ -1,8 +1,30 @@
 import { describe, expect, it, vi } from "vitest";
-import { unavailable, type AccountSummary, type LiveData, type MarketData, type NewsItem, type Position } from "@pcc/shared";
+import {
+  unavailable,
+  type AccountSummary,
+  type AnalystEstimateSummary,
+  type AnalystRevisionItem,
+  type Catalyst,
+  type EarningsEvent,
+  type LiveData,
+  type MarketData,
+  type NewsItem,
+  type PortfolioRiskSummary,
+  type Position,
+} from "@pcc/shared";
 import type { AIChatMessage, AIProvider, AIProviderResponse, AIProviderStatus, AIToolDefinition } from "../../domain/data-sources/ai-provider.js";
-import type { MarketDataSource, NewsDataSource, PortfolioDataSource } from "../../domain/data-sources/index.js";
+import type {
+  AnalystDataSource,
+  CatalystDataSource,
+  EarningsDataSource,
+  MarketDataSource,
+  NewsDataSource,
+  PortfolioDataSource,
+  RiskDataSource,
+} from "../../domain/data-sources/index.js";
 import type { IbkrPortfolioDataSource } from "../ibkr/ibkr-portfolio-data-source.js";
+import type { AlertService } from "../alerts/alert-service.js";
+import type { Scheduler } from "../scheduler/scheduler.js";
 import { PortfolioAiAgent } from "./agent.js";
 import type { ConversationService } from "./conversation-service.js";
 
@@ -59,7 +81,41 @@ function fakeServices() {
     getMaterialPortfolioUpdates: async (): Promise<LiveData<NewsItem[]>> => unavailable("news", "News integration is not connected yet."),
     getArticleById: async () => null,
   };
-  return { portfolioDataSource, ibkrPortfolioDataSource, marketDataSource, newsDataSource };
+  const analystDataSource: AnalystDataSource = {
+    getAnalystEstimate: async (): Promise<LiveData<AnalystEstimateSummary>> => unavailable("analyst", "Analyst data integration is not connected yet."),
+    getAnalystRevisions: async (): Promise<LiveData<AnalystRevisionItem[]>> => unavailable("analyst", "Analyst data integration is not connected yet."),
+  };
+  const earningsDataSource: EarningsDataSource = {
+    getEarningsForSymbol: async (): Promise<LiveData<EarningsEvent[]>> => unavailable("earnings", "Earnings data integration is not connected yet."),
+    getUpcomingPortfolioEarnings: async (): Promise<LiveData<EarningsEvent[]>> => unavailable("earnings", "Earnings data integration is not connected yet."),
+  };
+  const catalystDataSource: CatalystDataSource = {
+    getCatalystsForSymbol: async (): Promise<LiveData<Catalyst[]>> => unavailable("catalyst-engine", "No catalyst data available."),
+    getPortfolioCatalysts: async (): Promise<LiveData<Catalyst[]>> => unavailable("catalyst-engine", "No catalyst data available."),
+  };
+  const riskDataSource: RiskDataSource = {
+    getPortfolioRiskSummary: async (): Promise<LiveData<PortfolioRiskSummary>> => unavailable("risk-engine", "IBKR is not connected yet."),
+  };
+  const alertService = {
+    getActiveAlerts: async () => [],
+    getRecentAlerts: async () => [],
+    getAlertHistory: async () => [],
+  } as unknown as AlertService;
+  const scheduler = {
+    getStatus: () => ({ schedulerRunning: true, jobs: [] }),
+  } as unknown as Scheduler;
+  return {
+    portfolioDataSource,
+    ibkrPortfolioDataSource,
+    marketDataSource,
+    newsDataSource,
+    analystDataSource,
+    earningsDataSource,
+    catalystDataSource,
+    riskDataSource,
+    alertService,
+    scheduler,
+  };
 }
 
 describe("PortfolioAiAgent — not configured", () => {

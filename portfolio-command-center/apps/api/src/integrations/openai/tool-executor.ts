@@ -1,12 +1,28 @@
 import { unavailable, type LiveData, type MarketData, type Position } from "@pcc/shared";
-import type { MarketDataSource, NewsDataSource, PortfolioDataSource } from "../../domain/data-sources/index.js";
+import type {
+  AnalystDataSource,
+  CatalystDataSource,
+  EarningsDataSource,
+  MarketDataSource,
+  NewsDataSource,
+  PortfolioDataSource,
+  RiskDataSource,
+} from "../../domain/data-sources/index.js";
 import type { IbkrPortfolioDataSource } from "../ibkr/ibkr-portfolio-data-source.js";
+import type { AlertService } from "../alerts/alert-service.js";
+import type { Scheduler } from "../scheduler/scheduler.js";
 
 export interface ToolServices {
   portfolioDataSource: PortfolioDataSource;
   ibkrPortfolioDataSource: IbkrPortfolioDataSource;
   marketDataSource: MarketDataSource;
   newsDataSource: NewsDataSource;
+  analystDataSource: AnalystDataSource;
+  earningsDataSource: EarningsDataSource;
+  catalystDataSource: CatalystDataSource;
+  riskDataSource: RiskDataSource;
+  alertService: AlertService;
+  scheduler: Scheduler;
 }
 
 export type ToolExecutor = (userId: string, args: Record<string, unknown>, services: ToolServices) => Promise<unknown>;
@@ -110,8 +126,10 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
     return notImplemented("Portfolio Snapshots", "No portfolio snapshot history exists yet — scheduled snapshots are a later phase.");
   },
 
-  async getRiskMetrics() {
-    return notImplemented("Risk Engine", "Risk analysis isn't implemented yet — it ships in Phase 5.");
+  async getRiskMetrics(userId, _args, services) {
+    const result = await services.riskDataSource.getPortfolioRiskSummary(userId);
+    if (!result.data) return { data: null, meta: result.meta };
+    return { data: result.data.metrics, meta: result.meta };
   },
 
   async getPortfolioContext(userId, _args, services) {
@@ -136,5 +154,49 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
 
   async getMaterialPortfolioUpdates(userId, _args, services) {
     return services.newsDataSource.getMaterialPortfolioUpdates(userId);
+  },
+
+  async getAnalystData(_userId, args, services) {
+    const symbol = String(args.symbol ?? "").toUpperCase();
+    return services.analystDataSource.getAnalystEstimate(symbol);
+  },
+
+  async getAnalystRevisions(_userId, args, services) {
+    const symbol = String(args.symbol ?? "").toUpperCase();
+    const limit = typeof args.limit === "number" ? args.limit : undefined;
+    return services.analystDataSource.getAnalystRevisions(symbol, limit);
+  },
+
+  async getUpcomingEarnings(userId, args, services) {
+    const limit = typeof args.limit === "number" ? args.limit : undefined;
+    return services.earningsDataSource.getUpcomingPortfolioEarnings(userId, limit);
+  },
+
+  async getPortfolioCatalysts(userId, args, services) {
+    const limit = typeof args.limit === "number" ? args.limit : undefined;
+    return services.catalystDataSource.getPortfolioCatalysts(userId, limit);
+  },
+
+  async getPortfolioRiskSummary(userId, _args, services) {
+    return services.riskDataSource.getPortfolioRiskSummary(userId);
+  },
+
+  async getActiveAlerts(userId, args, services) {
+    const limit = typeof args.limit === "number" ? args.limit : undefined;
+    return services.alertService.getActiveAlerts(userId, limit);
+  },
+
+  async getRecentAlerts(userId, args, services) {
+    const limit = typeof args.limit === "number" ? args.limit : undefined;
+    return services.alertService.getRecentAlerts(userId, limit);
+  },
+
+  async getAlertHistory(userId, args, services) {
+    const limit = typeof args.limit === "number" ? args.limit : undefined;
+    return services.alertService.getAlertHistory(userId, limit);
+  },
+
+  async getMonitoringStatus(_userId, _args, services) {
+    return services.scheduler.getStatus();
   },
 };

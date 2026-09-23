@@ -57,4 +57,9 @@ export const apiClient = {
 			method: "POST",
 			body: JSON.stringify(payload),
 		}),
+	patch: <T>(path: string, payload: unknown = {}) =>
+		request<T>(path, {
+			method: "PATCH",
+			body: JSON.stringify(payload),
+		}),
 };

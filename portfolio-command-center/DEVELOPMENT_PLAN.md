@@ -2,9 +2,11 @@
 
 Each phase ends with something real and testable — never a mock standing in
 for an integration that phase was supposed to build. We do not start a phase
-until the previous one is confirmed working. **Phases 0-4 are implemented.
-Do not begin Phase 5 (risk, scenarios, catalysts) without explicit
-sign-off.**
+until the previous one is confirmed working. **Phases 0-6 are implemented.
+Do not begin Phase 7 (trading with explicit confirmation, plus production
+deployment, security hardening, performance hardening, operational
+readiness, backup/recovery, production secrets management, and final
+end-to-end validation) without explicit sign-off.**
 
 ## Phase 0 — Architecture and environment
 
@@ -175,37 +177,130 @@ the user's actual holdings when IBKR and Finnhub are both connected, and
 an honest "not connected" state otherwise — met, pending only the live
 Finnhub key this sandbox doesn't have.
 
-## Phase 5 — Risk, scenarios, catalysts
+## Phase 5 — Analysts, earnings, catalysts, risk ✅ (implemented; live testing requires FINNHUB_API_KEY)
 
-**Goal:** risk and scenario analysis grounded in real position data.
+**Goal:** analyst consensus, earnings dates, portfolio-aware catalysts, and
+deterministic risk metrics grounded in real position data — never a
+fabricated prediction or an arbitrary composite score.
 
-- Risk metrics (concentration, sector/geographic exposure, volatility,
-  drawdown, correlation, beta, margin/liquidity risk, thematic exposure)
-  computed in `domain/risk` from real snapshots, each with an explanation of
-  its source, not just a label.
-- Scenario tool (`getRiskMetrics` extended, plus a scenario endpoint/tool)
-  answering "what if X moves N%" questions, clearly labeled
-  `SCENARIO / ESTIMATE`.
-- Risk and Review screens.
+- [x] Vendor decision: **Finnhub**, reusing the same `FINNHUB_API_KEY` as
+      Phase 4's news integration rather than onboarding a second vendor —
+      see `docs/RISK_AND_CATALYSTS.md` §1 for the comparison and pricing.
+- [x] `AnalystDataSource` → `AnalystService` → `FinnhubAnalystProvider`
+      pipeline; deterministic consensus-rating derivation
+      (`deriveConsensusRating`) from strong buy/buy/hold/sell/strong sell
+      counts, never presented as the app's own prediction.
+- [x] `EarningsDataSource` → `EarningsService` → `FinnhubEarningsProvider`
+      pipeline distinguishing estimated/confirmed/actual/unavailable
+      status — never an invented earnings date.
+- [x] Normalized `Catalyst` model/service: a pure aggregator (no vendor of
+      its own) mapping news categories, earnings entries, and analyst
+      revisions into a single portfolio-aware catalyst feed for the
+      watchlist (MSFT, WDC, GFS, CLS, WMT, AVUV, SPMO, VTI, VXUS),
+      idempotent via a `(sourceType, sourceId)` unique constraint.
+- [x] Deterministic risk engine (`domain/risk` /
+      `integrations/risk/risk-engine.ts`): position/sector/country
+      concentration, ETF-vs-equity exposure, cash exposure, top-N and
+      single-name concentration, gross exposure, leverage, margin
+      utilization, unrealized P&L concentration, and 7-day
+      exposure/concentration change (once `PortfolioSnapshot` history
+      exists) — every metric individually measurable, documented (formula/
+      source/timestamp/limitations), with **no arbitrary composite risk
+      score**. A missing input returns `value: null` with an explanation,
+      never a substituted zero.
+- [x] 6 AI tools (`getAnalystData`, `getAnalystRevisions`,
+      `getUpcomingEarnings`, `getPortfolioCatalysts`, `getRiskMetrics`,
+      `getPortfolioRiskSummary`) calling application services only, never
+      Finnhub directly.
+- [x] Endpoints: `GET /analysts`, `/analysts/:symbol`,
+      `/analysts/:symbol/revisions`, `/earnings`, `/earnings/:symbol`,
+      `/catalysts`, `/catalysts/portfolio`, `/risk`, `/risk/summary` — all
+      authenticated, all scoped to the requesting user's own holdings.
+- [x] Real Analysts, Catalysts, Risk, and Targets UI screens with honest
+      empty/unavailable states — no placeholder values.
+- [x] Fixture-based tests: provider abstractions, normalization, consensus
+      derivation, revisions, earnings status, catalyst mapping/dedup, risk
+      calculations (including unavailable-input and never-substitute-zero
+      behavior), timestamps/source attribution, route auth and user
+      isolation, AI tools — no test pretends a real Finnhub connection
+      exists.
+- [ ] **Live verification against a real Finnhub account** — not possible
+      from this sandboxed environment (`FINNHUB_API_KEY` unset, confirmed
+      before implementation). See `docs/RISK_AND_CATALYSTS.md` §7 for the
+      exact steps to test live; architecture and code are otherwise
+      complete and tested.
 
 **Exit criteria:** risk page explains *why* something is flagged as risky
-using the user's real concentration/exposure numbers.
+using the user's real concentration/exposure numbers — met, pending only the
+live Finnhub key this sandbox doesn't have.
 
-## Phase 6 — Monitoring and alerts
+## Phase 6 — Monitoring and alerts ✅ (implemented; live monitoring requires IBKR/Finnhub/OpenAI credentials)
 
 **Goal:** the system watches itself and the portfolio without the user
-having to ask.
+having to ask — deterministic detection and notification only, never
+autonomous trading or order placement.
 
-- Alert rules (price moves, news importance, catalyst proximity, IBKR
-  session health) evaluated by scheduled jobs, delivered in-app (and by
-  email/push if the user wants that scoped in).
-- System Health page fully real across all six components (IBKR, OpenAI,
-  Market Data, News, Database, Scheduled Jobs) with accurate
-  Operational/Degraded/Failed states.
-- Error tracking wired in.
+- [x] `AlertEngine` (Scheduler → data refresh → change detection →
+      materiality rules → `AlertEngine` → `Alert` → UI/notification layer)
+      reusing the existing `Alert` model (extended, not duplicated) plus a
+      new `AlertRule` model for per-user configuration.
+- [x] 14 alert categories (significant price movement, portfolio P&L
+      change, high-relevance news, earnings approaching/released, analyst
+      target revision, analyst rating change, major catalyst,
+      concentration change, margin/liquidity threshold, unusual exposure
+      change, data connection failure, stale data, IBKR connection status
+      change) — 12 rule-gated behind an explicit opt-in `AlertRule`, plus 2
+      always-on connectivity detectors (`DATA_CONNECTION_FAILURE`,
+      `IBKR_CONNECTION_STATUS`) that run for every user regardless of
+      configuration.
+- [x] User-configurable rules: enabled/disabled, symbol, category,
+      threshold, severity, cooldown minutes, in-app notification
+      preference — conservative defaults, no spamming.
+- [x] Deduplication/cooldown via a single `raise()` method and a
+      `dedupeKey` (threshold-style `"{CATEGORY}:{symbol}"`, event-style
+      `"{CATEGORY}:{entityId}"`), tracking first-detected/last-detected/
+      notification-state so the same underlying event doesn't re-alert
+      every refresh cycle.
+- [x] `Scheduler`/job abstraction (persistent-process, self-rescheduling
+      per job with capped exponential backoff on failure — not
+      serverless/cron) with 5 jobs: `refreshNews`, `refreshMarketData`,
+      `refreshPortfolioState`, `refreshAnalystData`/`refreshEarnings`
+      (combined), and `evaluateAlerts`; configurable refresh intervals,
+      respecting provider rate limits.
+- [x] Explicit sandbox honesty: no live IBKR/OpenAI/Finnhub credentials in
+      this environment, so all 5 jobs safely no-op with zero authenticated
+      users/configured providers — no fake background data, no simulated
+      live alerts; every test uses deterministic fixtures.
+- [x] Updates/Alerts UI distinguishing NEW/READ/ACKNOWLEDGED, showing
+      severity, timestamp, source, symbol, event type, explanation, and a
+      link to source where applicable — portfolio-specific to the
+      authenticated user.
+- [x] `NotificationProvider` abstraction; `InAppNotificationProvider` is
+      the only real implementation (writes a `SystemEvent`), with no
+      pretense that email/push exist yet.
+- [x] Detection is 100% deterministic — `AlertEngine` never makes an LLM
+      call as part of a scheduled polling cycle. 4 AI tools
+      (`getActiveAlerts`, `getRecentAlerts`, `getAlertHistory`,
+      `getMonitoringStatus`) let the AI explain alerts but never create or
+      modify alert configuration.
+- [x] `SystemEventLogger` reuses the pre-existing `SystemEvent` model for
+      job started/completed/failed, provider-unavailable, alert-generated,
+      and alert-suppressed-by-cooldown events — no secrets logged.
+- [x] System Health page fully real across all seven components (IBKR,
+      OpenAI, Market Data, News, Analyst & Earnings Data, Database,
+      Scheduled Jobs) with accurate Operational/Degraded/Failed/
+      Not-configured states.
+- [x] Fixture-based tests: scheduler backoff timing (fake timers), job
+      execution/no-op behavior, cooldown/dedup (including against a real
+      Postgres instance with the actual always-on detectors), thresholds,
+      user isolation, authentication, unavailable-provider states, and API
+      endpoints — no test fakes a live provider connection.
 
 **Exit criteria:** killing/degrading an integration in a test environment is
-visibly reflected in System Health and triggers the right alert, not silence.
+visibly reflected in System Health and triggers the right alert, not
+silence — met and tested with deterministic fixtures; the live "system
+continuously monitors a real portfolio" experience is blocked on the same
+IBKR/OpenAI/Finnhub credentials the earlier phases lack in this sandbox.
 
 ## Phase 7 — Trading with explicit confirmation
 

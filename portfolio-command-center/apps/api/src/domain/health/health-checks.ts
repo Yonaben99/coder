@@ -4,11 +4,13 @@ import type { AppConfig } from "../../config.js";
 import type { IbkrConnectionManager } from "../../integrations/ibkr/connection-manager.js";
 import type { PortfolioAiAgent } from "../../integrations/openai/agent.js";
 import type { NewsService } from "../../integrations/news/news-service.js";
+import type { AnalystService } from "../../integrations/analyst/analyst-service.js";
+import type { Scheduler } from "../../integrations/scheduler/scheduler.js";
 
 /**
  * Every check here either performs a real test (database) or reports
  * "not_configured" based on whether credentials/URLs are present — it never
- * hardcodes "operational". See ARCHITECTURE.md §3.8 and SECURITY.md.
+ * hardcodes "operational". See ARCHITECTURE.md §3.10 and SECURITY.md.
  */
 export async function checkDatabase(prisma: PrismaClient): Promise<IntegrationHealth> {
   const now = new Date().toISOString();
@@ -198,15 +200,89 @@ export function checkNews(newsService: NewsService): IntegrationHealth {
   };
 }
 
-export function checkScheduledJobs(): IntegrationHealth {
+/**
+ * Covers both the analyst and earnings integrations jointly — they share
+ * the same Finnhub vendor and FINNHUB_API_KEY (docs/RISK_AND_CATALYSTS.md
+ * §1), so a single real fetch from either one is evidence the connection
+ * works. Mirrors checkNews/checkOpenAi's honesty rule.
+ */
+export function checkAnalyst(analystService: AnalystService): IntegrationHealth {
   const now = new Date().toISOString();
+  const status = analystService.getStatus();
+
+  if (!status.configured) {
+    return {
+      key: "analyst",
+      label: "Analyst & Earnings Data",
+      status: "not_configured",
+      lastCheckedAt: now,
+      lastSuccessfulSyncAt: null,
+      detail: "Analyst/earnings data integration is not connected. Set FINNHUB_API_KEY and see docs/RISK_AND_CATALYSTS.md.",
+    };
+  }
+  if (status.lastError && !status.lastSuccessfulFetchAt) {
+    return {
+      key: "analyst",
+      label: "Analyst & Earnings Data",
+      status: "failed",
+      lastCheckedAt: now,
+      lastSuccessfulSyncAt: null,
+      detail: status.lastError,
+    };
+  }
+  if (!status.lastSuccessfulFetchAt) {
+    return {
+      key: "analyst",
+      label: "Analyst & Earnings Data",
+      status: "degraded",
+      lastCheckedAt: now,
+      lastSuccessfulSyncAt: null,
+      detail: "Finnhub key is set but hasn't been verified by a successful fetch yet — open Analysts or Catalysts to test it.",
+    };
+  }
+  return {
+    key: "analyst",
+    label: "Analyst & Earnings Data",
+    status: status.lastError ? "degraded" : "operational",
+    lastCheckedAt: now,
+    lastSuccessfulSyncAt: status.lastSuccessfulFetchAt,
+    detail: status.lastError ?? undefined,
+  };
+}
+
+/**
+ * Real since Phase 6: the scheduler always runs (no credential gates it —
+ * its jobs simply no-op when nothing is configured), so "not_configured"
+ * no longer applies. "operational" requires the scheduler to actually be
+ * running; "degraded" surfaces a job with a real lastError.
+ */
+export function checkScheduledJobs(scheduler: Scheduler): IntegrationHealth {
+  const now = new Date().toISOString();
+  const status = scheduler.getStatus();
+  const failingJob = status.jobs.find((j) => j.lastError);
+  const mostRecentSuccess = status.jobs
+    .map((j) => j.lastSuccessAt)
+    .filter((t): t is string => !!t)
+    .sort()
+    .at(-1);
+
+  if (!status.schedulerRunning) {
+    return {
+      key: "scheduled_jobs",
+      label: "Scheduled Jobs",
+      status: "failed",
+      lastCheckedAt: now,
+      lastSuccessfulSyncAt: mostRecentSuccess ?? null,
+      detail: "The scheduler is not running.",
+    };
+  }
   return {
     key: "scheduled_jobs",
     label: "Scheduled Jobs",
-    status: "not_configured",
+    status: failingJob ? "degraded" : "operational",
     lastCheckedAt: now,
-    lastSuccessfulSyncAt: null,
-    detail: "No scheduled jobs are defined yet — they ship starting Phase 4.",
+    lastSuccessfulSyncAt: mostRecentSuccess ?? null,
+    detail: failingJob ? `${failingJob.name}: ${failingJob.lastError}` : `${status.jobs.length} job(s) registered.`,
   };
 }
 
@@ -216,7 +292,17 @@ export async function getAllIntegrationHealth(
   ibkr: IbkrConnectionManager,
   aiAgent: PortfolioAiAgent,
   newsService: NewsService,
+  analystService: AnalystService,
+  scheduler: Scheduler,
 ): Promise<IntegrationHealth[]> {
   const database = await checkDatabase(prisma);
-  return [checkIbkr(ibkr), checkOpenAi(aiAgent), checkMarketData(config), checkNews(newsService), database, checkScheduledJobs()];
+  return [
+    checkIbkr(ibkr),
+    checkOpenAi(aiAgent),
+    checkMarketData(config),
+    checkNews(newsService),
+    checkAnalyst(analystService),
+    database,
+    checkScheduledJobs(scheduler),
+  ];
 }

@@ -3,6 +3,7 @@ export type IntegrationKey =
   | "openai"
   | "market_data"
   | "news"
+  | "analyst"
   | "database"
   | "scheduled_jobs";
 

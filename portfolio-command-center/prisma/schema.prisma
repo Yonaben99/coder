@@ -20,6 +20,7 @@ model User {
   sessions           Session[]
   ibkrConnection     IBKRConnection?
   portfolioSnapshots PortfolioSnapshot[]
+  alertRules         AlertRule[]
   alerts             Alert[]
   aiConversations    AIConversation[]
   orderSnapshots     OrderSnapshot[]
@@ -77,6 +78,7 @@ model Instrument {
   newsArticles        NewsArticle[]
   analystEstimates    AnalystEstimate[]
   analystRevisions    AnalystRevision[]
+  earnings            Earnings[]
   catalysts           Catalyst[]
   orderSnapshots      OrderSnapshot[]
   tradeSnapshots      TradeSnapshot[]
@@ -215,7 +217,12 @@ model NewsEvent {
   @@index([articleId])
 }
 
-// ── Analysts ──────────────────────────────────────────────────────────────
+// ── Analysts (Phase 5) ───────────────────────────────────────────────────
+//
+// `source` is the original data owner (e.g. "Finnhub consensus"); `provider`
+// is which API we fetched it through — same distinction NewsArticle makes,
+// see docs/NEWS_INTEGRATION.md §4. `provider`+`externalId` gives idempotent
+// upserts on re-fetch, same pattern as NewsArticle.
 
 model AnalystEstimate {
   id              String     @id @default(cuid())
@@ -227,9 +234,13 @@ model AnalystEstimate {
   consensusRating String?
   analystCount    Int?
   source          String
+  provider        String
+  externalId      String?
   asOf            DateTime
+  retrievedAt     DateTime   @default(now())
   createdAt       DateTime   @default(now())
 
+  @@unique([provider, externalId])
   @@index([instrumentId, asOf])
 }
 
@@ -242,24 +253,156 @@ model AnalystRevision {
   newValue      String?
   ratingChange  String?
   source        String
+  provider      String
+  externalId    String?
   revisedAt     DateTime
+  retrievedAt   DateTime   @default(now())
   createdAt     DateTime   @default(now())
 
+  @@unique([provider, externalId])
   @@index([instrumentId, revisedAt])
 }
 
-// ── Catalysts, alerts ────────────────────────────────────────────────────
+// ── Earnings (Phase 5) ───────────────────────────────────────────────────
+
+enum EarningsStatus {
+  /// Reporting date and/or figures are forecast, not confirmed by the company.
+  ESTIMATED
+  /// The reporting date itself is confirmed (e.g. company-announced), figures still forecast.
+  CONFIRMED
+  /// The company has actually reported — actualEps/actualRevenue populated.
+  ACTUAL
+}
+
+model Earnings {
+  id                 String         @id @default(cuid())
+  instrumentId       String
+  instrument         Instrument     @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+  /// e.g. "Q3 2026" — provider-reported fiscal period label.
+  period             String?
+  reportDate         DateTime?
+  /// "bmo" (before market open) / "amc" (after market close) / "dmh" (during market hours), when the provider reports it.
+  announcementTiming String?
+  estimatedEps       Decimal?       @db.Decimal(18, 4)
+  estimatedRevenue   Decimal?       @db.Decimal(20, 2)
+  actualEps          Decimal?       @db.Decimal(18, 4)
+  actualRevenue      Decimal?       @db.Decimal(20, 2)
+  status             EarningsStatus @default(ESTIMATED)
+  source             String
+  provider           String
+  externalId         String?
+  retrievedAt        DateTime       @default(now())
+  createdAt          DateTime       @default(now())
+
+  @@unique([provider, externalId])
+  @@index([instrumentId, reportDate])
+}
+
+// ── Catalysts (Phase 5) ──────────────────────────────────────────────────
+
+enum CatalystType {
+  EARNINGS
+  GUIDANCE
+  PRODUCT_LAUNCH
+  MAJOR_CONTRACT
+  REGULATORY_EVENT
+  MERGER_ACQUISITION
+  INVESTOR_DAY
+  CAPITAL_ALLOCATION
+  LEGAL_REGULATORY_DECISION
+  ANALYST_REVISION
+  OTHER
+}
+
+enum CatalystStatus {
+  UPCOMING
+  COMPLETED
+}
+
+/// Which subsystem generated this catalyst — lets refresh jobs upsert idempotently via (sourceType, sourceId) instead of duplicating a catalyst every cycle.
+enum CatalystSourceType {
+  NEWS
+  EARNINGS
+  ANALYST_REVISION
+  MANUAL
+}
 
 model Catalyst {
-  id           String      @id @default(cuid())
-  instrumentId String?
-  instrument   Instrument? @relation(fields: [instrumentId], references: [id])
-  description  String
-  expectedDate DateTime?
-  source       String?
-  createdAt    DateTime    @default(now())
+  id            String              @id @default(cuid())
+  instrumentId  String?
+  instrument    Instrument?         @relation(fields: [instrumentId], references: [id])
+  type          CatalystType        @default(OTHER)
+  title         String
+  description   String
+  expectedDate  DateTime?
+  /// Whether expectedDate is a company-confirmed date vs. an estimate/inference — see docs/RISK_AND_CATALYSTS.md.
+  dateConfirmed Boolean             @default(false)
+  status        CatalystStatus      @default(UPCOMING)
+  relevance     RelevanceLevel?
+  source        String?
+  url           String?
+  publishedAt   DateTime?
+  retrievedAt   DateTime            @default(now())
+  sourceType    CatalystSourceType  @default(MANUAL)
+  sourceId      String?
+  createdAt     DateTime            @default(now())
 
+  @@unique([sourceType, sourceId])
   @@index([instrumentId, expectedDate])
+}
+
+// ── Alerts (Phase 6) ─────────────────────────────────────────────────────
+
+enum AlertCategory {
+  PRICE_MOVEMENT
+  PNL_CHANGE
+  HIGH_RELEVANCE_NEWS
+  EARNINGS_APPROACHING
+  EARNINGS_RELEASED
+  ANALYST_TARGET_REVISION
+  ANALYST_RATING_CHANGE
+  MAJOR_CATALYST
+  CONCENTRATION_CHANGE
+  MARGIN_LIQUIDITY_THRESHOLD
+  EXPOSURE_CHANGE
+  DATA_CONNECTION_FAILURE
+  STALE_DATA
+  IBKR_CONNECTION_STATUS
+}
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+/// The user's read/triage state for one alert instance — separate from `status`, which tracks whether the underlying condition is still active.
+enum AlertReadState {
+  NEW
+  READ
+  ACKNOWLEDGED
+}
+
+/// User-configurable monitoring rule (Phase 6.3). One rule can produce many Alert instances over time.
+model AlertRule {
+  id              String        @id @default(cuid())
+  userId          String
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category        AlertCategory
+  /// null = portfolio-wide rule (e.g. margin threshold); set = single-symbol rule.
+  symbol          String?
+  enabled         Boolean       @default(true)
+  threshold       Decimal?      @db.Decimal(18, 6)
+  severity        AlertSeverity @default(WARNING)
+  /// Minimum minutes between two alerts from this rule for the same dedupe key — see AlertEngine (docs/ALERTS_AND_MONITORING.md).
+  cooldownMinutes Int           @default(60)
+  notifyInApp     Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  alerts Alert[]
+
+  @@index([userId, category])
 }
 
 enum AlertStatus {
@@ -268,17 +411,33 @@ enum AlertStatus {
   DISMISSED
 }
 
+/// One detected occurrence of an alert condition. `condition` is the original Phase-1 field, reused (not duplicated) to hold the structured detection payload (threshold/actualValue/previousValue).
 model Alert {
-  id          String      @id @default(cuid())
-  userId      String
-  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  condition   Json
-  status      AlertStatus @default(ACTIVE)
-  triggeredAt DateTime?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  id              String         @id @default(cuid())
+  userId          String
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ruleId          String?
+  rule            AlertRule?     @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  category        AlertCategory
+  symbol          String?
+  severity        AlertSeverity  @default(WARNING)
+  title           String
+  explanation     String
+  sourceUrl       String?
+  condition       Json
+  status          AlertStatus    @default(ACTIVE)
+  readState       AlertReadState @default(NEW)
+  /// Cooldown/dedup key (e.g. "PRICE_MOVEMENT:WDC"). A re-detection within the rule's cooldown window updates lastDetectedAt on the existing row instead of creating a new one — see docs/ALERTS_AND_MONITORING.md §4.
+  dedupeKey       String
+  firstDetectedAt DateTime       @default(now())
+  lastDetectedAt  DateTime       @default(now())
+  triggeredAt     DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
 
   @@index([userId, status])
+  @@index([userId, dedupeKey])
+  @@index([userId, readState])
 }
 
 // ── AI ────────────────────────────────────────────────────────────────────

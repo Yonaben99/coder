@@ -1,0 +1,10 @@
+export type { AnalystErrorCode } from "./errors.js";
+export { AnalystError, classifyAnalystError } from "./errors.js";
+export type { AnalystHttpClient } from "./client.js";
+export { FinnhubHttpClient } from "./client.js";
+export type { AnalystProvider } from "./analyst-provider.js";
+export { FinnhubAnalystProvider } from "./finnhub-analyst-provider.js";
+export { deriveConsensusRating, normalizeAnalystEstimate, normalizeUpgradeDowngrade } from "./normalizer.js";
+export { AnalystService } from "./analyst-service.js";
+export { AnalystIntegrationDataSource } from "./analyst-integration-data-source.js";
+export { NotConnectedAnalystDataSource } from "./not-connected-analyst-data-source.js";

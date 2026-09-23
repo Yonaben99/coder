@@ -24,7 +24,7 @@ describe("health endpoints", () => {
     const body = response.json() as { status: string; services: Array<{ key: string; status: string }> };
 
     const keys = body.services.map((s) => s.key).sort();
-    expect(keys).toEqual(["database", "ibkr", "market_data", "news", "openai", "scheduled_jobs"].sort());
+    expect(keys).toEqual(["analyst", "database", "ibkr", "market_data", "news", "openai", "scheduled_jobs"].sort());
 
     const database = body.services.find((s) => s.key === "database");
     expect(database?.status).toBe("operational");

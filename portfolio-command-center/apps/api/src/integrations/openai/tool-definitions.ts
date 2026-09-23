@@ -29,6 +29,24 @@ const SYMBOL_NEWS_PARAMS = {
   additionalProperties: false,
 } as const;
 
+const SYMBOL_LIMIT_PARAMS = {
+  type: "object",
+  properties: {
+    symbol: { type: "string", description: "Ticker symbol, e.g. AAPL, WDC." },
+    limit: { type: "number", description: "Max number of items to return." },
+  },
+  required: ["symbol"],
+  additionalProperties: false,
+} as const;
+
+const LIMIT_PARAMS = {
+  type: "object",
+  properties: {
+    limit: { type: "number", description: "Max number of items to return." },
+  },
+  additionalProperties: false,
+} as const;
+
 /**
  * Every tool the Portfolio AI can call. Each maps 1:1 to a function in
  * tool-executor.ts, which calls the application's existing services
@@ -88,7 +106,8 @@ export const PORTFOLIO_AI_TOOLS: AIToolDefinition[] = [
   },
   {
     name: "getRiskMetrics",
-    description: "Concentration, volatility, and exposure risk metrics (returns unavailable — the risk engine isn't implemented yet, a later phase).",
+    description:
+      "A compact list of deterministic portfolio risk metrics (largest position weight, top-5/10 concentration, sector/country concentration, cash exposure, gross exposure, leverage, margin utilization, unrealized P&L concentration, and 7-day exposure/concentration change where snapshot history exists) — each with its own formula and severity. Never an arbitrary composite 'risk score'. Use for 'how risky is my portfolio', 'am I too concentrated'.",
     parameters: NO_PARAMS,
   },
   {
@@ -118,6 +137,58 @@ export const PORTFOLIO_AI_TOOLS: AIToolDefinition[] = [
     name: "getMaterialPortfolioUpdates",
     description:
       "The subset of portfolio holdings' news classified medium or high relevance (earnings, guidance, M&A, regulation, litigation, management change, analyst actions, large price moves, etc.) — a filtered, higher-signal view of getPortfolioNews. Use for 'anything important happen with my positions', 'material news on my portfolio'.",
+    parameters: NO_PARAMS,
+  },
+  {
+    name: "getAnalystData",
+    description:
+      "Analyst consensus for a ticker: average/high/low price target, a consensus rating derived from analyst buy/hold/sell counts, and analyst count, with source and timestamp. Analyst-derived information, not this application's own prediction — always label it as such. Use for 'what's the price target on AAPL', 'what do analysts think of WDC'.",
+    parameters: SYMBOL_PARAM,
+  },
+  {
+    name: "getAnalystRevisions",
+    description:
+      "Recent individual analyst rating/target changes for a ticker (firm, previous → new rating, action, date). Use for 'any recent analyst upgrades on WDC', 'who downgraded this stock'.",
+    parameters: SYMBOL_LIMIT_PARAMS,
+  },
+  {
+    name: "getUpcomingEarnings",
+    description:
+      "Upcoming (and recently reported) earnings dates across every symbol currently held in the portfolio, with estimated/actual EPS and revenue where available. Requires IBKR to be connected with visible holdings. Use for 'when does WDC report earnings', 'what earnings are coming up for my portfolio'.",
+    parameters: LIMIT_PARAMS,
+  },
+  {
+    name: "getPortfolioCatalysts",
+    description:
+      "Upcoming and recent catalyst events (earnings, analyst revisions, and medium/high-relevance news) across the portfolio's holdings, each labeled with type, date, whether the date is company-confirmed or estimated, and relevance. Events, not predictions. Use for 'what's coming up for my portfolio', 'any major events on my positions'.",
+    parameters: LIMIT_PARAMS,
+  },
+  {
+    name: "getPortfolioRiskSummary",
+    description:
+      "The full portfolio risk picture in one call: every risk metric plus concentration breakdowns by sector, country, and asset type (ETF vs. individual equity, heuristic), and top positions by weight. The comprehensive counterpart to getRiskMetrics. Use for 'give me a full risk breakdown of my portfolio'.",
+    parameters: NO_PARAMS,
+  },
+  {
+    name: "getActiveAlerts",
+    description:
+      "Currently active (not yet dismissed/acknowledged) alerts the deterministic AlertEngine has detected — price moves, P&L swings, high-relevance news, earnings, analyst revisions, catalysts, concentration/exposure changes, margin thresholds, and connection health. Use for 'do I have any active alerts', 'what needs my attention right now'.",
+    parameters: LIMIT_PARAMS,
+  },
+  {
+    name: "getRecentAlerts",
+    description: "The most recently detected/updated alerts regardless of read state, most recent first. Use for 'what alerts have fired recently'.",
+    parameters: LIMIT_PARAMS,
+  },
+  {
+    name: "getAlertHistory",
+    description: "The full alert history for this account, oldest-detection-first pagination via limit. Use for 'show me my alert history'.",
+    parameters: LIMIT_PARAMS,
+  },
+  {
+    name: "getMonitoringStatus",
+    description:
+      "The scheduler's real status: which background jobs are registered (news/analyst/earnings refresh, portfolio snapshots, alert evaluation), each one's interval, last run time, last success time, and last error. Never claims monitoring is active beyond what's actually true. Use for 'is monitoring running', 'when did the news refresh last run'.",
     parameters: NO_PARAMS,
   },
 ];

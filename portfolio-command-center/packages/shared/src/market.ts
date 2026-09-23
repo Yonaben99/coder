@@ -53,6 +53,7 @@ export interface PortfolioNewsSummary {
   updateCount: number;
 }
 
+/** Analyst-derived data — labeled as such, never presented as this application's own prediction. */
 export interface AnalystEstimateSummary {
   symbol: string;
   averageTarget: number | null;
@@ -60,12 +61,55 @@ export interface AnalystEstimateSummary {
   lowTarget: number | null;
   consensusRating: string | null;
   analystCount: number | null;
+  source: string;
+  provider: string;
   asOf: string;
+  retrievedAt: string;
 }
 
+/** A single rating/target change from one analyst firm — analyst-derived, not our own conclusion. */
+export interface AnalystRevisionItem {
+  id: string;
+  symbol: string;
+  firm: string | null;
+  previousValue: string | null;
+  newValue: string | null;
+  ratingChange: string | null;
+  source: string;
+  provider: string;
+  revisedAt: string;
+  retrievedAt: string;
+}
+
+export type CatalystType =
+  | "earnings"
+  | "guidance"
+  | "product_launch"
+  | "major_contract"
+  | "regulatory_event"
+  | "merger_acquisition"
+  | "investor_day"
+  | "capital_allocation"
+  | "legal_regulatory_decision"
+  | "analyst_revision"
+  | "other";
+
+export type CatalystStatus = "upcoming" | "completed";
+
+/** An event, not a prediction — see docs/RISK_AND_CATALYSTS.md §2. */
 export interface Catalyst {
   id: string;
   symbol: string | null;
+  type: CatalystType;
+  title: string;
   description: string;
   expectedDate: string | null;
+  /** Whether expectedDate is company-confirmed vs. an estimate/inference. */
+  dateConfirmed: boolean;
+  status: CatalystStatus;
+  relevance: NewsRelevance | null;
+  source: string | null;
+  url: string | null;
+  publishedAt: string | null;
+  retrievedAt: string;
 }
