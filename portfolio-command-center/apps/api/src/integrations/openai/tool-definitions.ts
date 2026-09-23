@@ -11,6 +11,24 @@ const SYMBOL_PARAM = {
   additionalProperties: false,
 } as const;
 
+const RECENT_NEWS_PARAMS = {
+  type: "object",
+  properties: {
+    limit: { type: "number", description: "Max number of articles to return. Defaults to 20." },
+  },
+  additionalProperties: false,
+} as const;
+
+const SYMBOL_NEWS_PARAMS = {
+  type: "object",
+  properties: {
+    symbol: { type: "string", description: "Ticker symbol, e.g. AAPL, WDC." },
+    limit: { type: "number", description: "Max number of articles to return. Defaults to 20." },
+  },
+  required: ["symbol"],
+  additionalProperties: false,
+} as const;
+
 /**
  * Every tool the Portfolio AI can call. Each maps 1:1 to a function in
  * tool-executor.ts, which calls the application's existing services
@@ -77,6 +95,29 @@ export const PORTFOLIO_AI_TOOLS: AIToolDefinition[] = [
     name: "getPortfolioContext",
     description:
       "A compact combined snapshot of account summary, top positions, and allocation in one call — the efficient starting point for broad questions like 'analyze my portfolio' or 'tell me about my portfolio', instead of calling several tools separately.",
+    parameters: NO_PARAMS,
+  },
+  {
+    name: "getRecentNews",
+    description:
+      "Recent general market news, most recent first, with deterministic categories (earnings, guidance, regulation, etc.) and a low/medium/high relevance label per article. Not filtered to holdings. Use for 'what's happening in the market today'.",
+    parameters: RECENT_NEWS_PARAMS,
+  },
+  {
+    name: "getPortfolioNews",
+    description:
+      "Recent news for every symbol currently held in the user's portfolio, most recent first. Requires IBKR to be connected with visible holdings — otherwise reports why it's unavailable rather than guessing what's held. Use for 'any news on my holdings', 'what's new with my portfolio'.",
+    parameters: RECENT_NEWS_PARAMS,
+  },
+  {
+    name: "getNewsForSymbol",
+    description: "Recent news for a single ticker symbol, most recent first, regardless of whether it's currently held. Use for 'what's the latest on AAPL'.",
+    parameters: SYMBOL_NEWS_PARAMS,
+  },
+  {
+    name: "getMaterialPortfolioUpdates",
+    description:
+      "The subset of portfolio holdings' news classified medium or high relevance (earnings, guidance, M&A, regulation, litigation, management change, analyst actions, large price moves, etc.) — a filtered, higher-signal view of getPortfolioNews. Use for 'anything important happen with my positions', 'material news on my portfolio'.",
     parameters: NO_PARAMS,
   },
 ];

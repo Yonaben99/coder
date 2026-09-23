@@ -2,8 +2,8 @@
 
 Each phase ends with something real and testable — never a mock standing in
 for an integration that phase was supposed to build. We do not start a phase
-until the previous one is confirmed working. **Phases 0-3 are implemented.
-Do not begin Phase 4 (news and market intelligence) without explicit
+until the previous one is confirmed working. **Phases 0-4 are implemented.
+Do not begin Phase 5 (risk, scenarios, catalysts) without explicit
 sign-off.**
 
 ## Phase 0 — Architecture and environment
@@ -121,20 +121,59 @@ tools produces an honest "I don't have that yet" rather than a guess. Code
 and tests confirm this mechanically; the live model-behavior confirmation
 is blocked on an API key this environment doesn't have.
 
-## Phase 4 — News and market intelligence
+## Phase 4 — News and market intelligence ✅ (news implemented; live testing requires FINNHUB_API_KEY)
 
-**Goal:** real news, analyst data, and earnings, normalized into our DB.
+**Goal, as scoped for this phase:** real, portfolio-aware news, normalized
+into our DB, with deterministic materiality classification — explicitly
+**not** analyst targets/ratings, a catalyst/risk engine, automated alerts,
+trading, or autonomous AI monitoring (all deferred to their own later
+phases per the phase's own instructions).
 
-- Finalize the market-intelligence vendor decision with the user (FMP vs.
-  Finnhub vs. both) including cost/rate-limit tradeoffs.
-- Scheduled jobs poll news/analyst/earnings for held + watchlist symbols
-  into `news_items`, `analyst_estimates`, `analyst_revisions`, `earnings`.
-- News, Updates, Targets, Analysts, Catalysts screens driven by this data.
-- Remaining OpenAI tools (`getMarketData`, `getPortfolioNews`, `getNews`,
-  `getAnalystChanges`, `getEarnings`, `getCatalysts`) implemented.
+- [x] Finalized the news vendor decision: **Finnhub** (over FMP — see
+      `docs/NEWS_INTEGRATION.md` §2 for the comparison and pricing).
+- [x] `NewsDataSource` → `NewsService` → `FinnhubNewsProvider` pipeline,
+      reusing/extending the existing `NewsArticle`/`NewsEvent` schema
+      rather than duplicating it (no new `news_items` table — the actual
+      shape differs from this plan's original illustrative columns; see
+      `ARCHITECTURE.md` §6).
+- [x] Deterministic keyword-based categorization + low/medium/high
+      relevance classification (`categorizer.ts`) — no AI/ML and no
+      numeric "investment score", per the phase's explicit instruction.
+- [x] Two-layer deduplication (exact re-fetch idempotency + cross-query
+      near-duplicate detection), source attribution preserved on both
+      sides of a duplicate pair.
+- [x] `publishedAt`/`retrievedAt` tracked separately; `since` window
+      filtering (hour/today/24h/7d/latest).
+- [x] Endpoints: `GET /news`, `/news/:id`, `/news/portfolio`,
+      `/news/portfolio/summary`, `/news/symbol/:symbol`, `/news/recent` —
+      all authenticated, all returning the shared `LiveData<T>` envelope.
+- [x] Real News UI: Latest / Portfolio / By Symbol / Categories tabs, with
+      honest empty/unavailable states and a portfolio-news summary view
+      (real per-symbol counts, only when IBKR is actually connected).
+- [x] 4 AI tools (`getRecentNews`, `getPortfolioNews`, `getNewsForSymbol`,
+      `getMaterialPortfolioUpdates`) added to the Phase 3 tool
+      architecture, calling `NewsDataSource` — never the provider
+      directly.
+- [x] Fixture-based tests: provider abstraction, error classification,
+      normalization, categorization, deduplication, caching (live/cached/
+      unavailable), portfolio-symbol mapping, route auth and 404s — no
+      test pretends a real Finnhub connection exists.
+- [ ] **Live verification against a real Finnhub account** — not possible
+      from this sandboxed environment (`FINNHUB_API_KEY` unset, confirmed
+      before implementation). See `docs/NEWS_INTEGRATION.md` §9 for the
+      exact steps to test live; architecture and code are otherwise
+      complete and tested.
 
-**Exit criteria:** News/Targets/Analysts screens show real, sourced,
-timestamped items for the user's actual holdings.
+Analyst targets/ratings, earnings calendars, and Catalysts/Targets/Analysts
+screens from this plan's original Phase 4 description were **not** built
+this phase — they remain future work (see Phase 5's risk/catalyst scope
+and beyond), consistent with this phase's own explicit instruction not to
+build them yet.
+
+**Exit criteria:** News screens show real, sourced, timestamped items for
+the user's actual holdings when IBKR and Finnhub are both connected, and
+an honest "not connected" state otherwise — met, pending only the live
+Finnhub key this sandbox doesn't have.
 
 ## Phase 5 — Risk, scenarios, catalysts
 

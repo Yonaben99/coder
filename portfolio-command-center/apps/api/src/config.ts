@@ -17,6 +17,9 @@ const envSchema = z.object({
   OPENAI_MODEL: z.string().default("gpt-5.4-mini"),
   MARKET_INTEL_PROVIDER: z.string().optional(),
   MARKET_INTEL_API_KEY: z.string().optional(),
+  // News (Phase 4) — Finnhub, chosen for its ticker-scoped company-news
+  // endpoint and free-tier rate limit. See docs/NEWS_INTEGRATION.md §2.
+  FINNHUB_API_KEY: z.string().optional(),
   SENTRY_DSN: z.string().optional(),
 });
 

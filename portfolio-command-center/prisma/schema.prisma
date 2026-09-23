@@ -146,26 +146,63 @@ enum NewsEventType {
   REGULATION
   LITIGATION
   MANAGEMENT_CHANGE
+  PRODUCT
+  CAPITAL_ALLOCATION
+  BUYBACK
+  DIVIDEND
+  FINANCING
+  SUPPLY_CHAIN
+  CUSTOMER
+  PARTNERSHIP
   MACRO
+  ANALYST_ACTION
+  PRICE_MOVEMENT
   CONTRACT
   OTHER
+}
+
+/// Deterministic information-relevance signal, not an investment recommendation.
+enum RelevanceLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum NewsArticleStatus {
+  ACTIVE
+  DUPLICATE
 }
 
 model NewsArticle {
   id           String      @id @default(cuid())
   instrumentId String?
   instrument   Instrument? @relation(fields: [instrumentId], references: [id])
+  /// All ticker symbols this article mentions/relates to (uppercased), for portfolio matching — see docs/NEWS_INTEGRATION.md §6.
+  relatedSymbols String[]  @default([])
   headline     String
   summary      String?
+  /// Original publisher (e.g. "Reuters") — distinct from `provider`, which is the API we fetched it through.
   source       String
   url          String
   publishedAt  DateTime
-  importance   Int?
+  /// When our own system first/last confirmed this article via the provider — distinct from publishedAt.
+  retrievedAt  DateTime    @default(now())
+  relevance    RelevanceLevel?
+  /// Which news API this row came from (e.g. "finnhub") — see NewsProvider in apps/api/src/integrations/news/.
+  provider     String
+  /// The provider's own article id, used with `provider` for idempotent upserts (re-fetching the same article never creates a duplicate row).
+  externalId   String?
+  status       NewsArticleStatus @default(ACTIVE)
+  duplicateOfId String?
+  duplicateOf  NewsArticle? @relation("ArticleDuplicates", fields: [duplicateOfId], references: [id])
+  duplicates   NewsArticle[] @relation("ArticleDuplicates")
   createdAt    DateTime    @default(now())
 
   events NewsEvent[]
 
+  @@unique([provider, externalId])
   @@index([instrumentId, publishedAt])
+  @@index([publishedAt])
 }
 
 model NewsEvent {

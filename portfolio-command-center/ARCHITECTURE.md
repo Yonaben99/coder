@@ -57,14 +57,22 @@ implementations separate from the transport that calls them (see §5).
 
 IBKR's own market data endpoints (subject to the user's IBKR market data
 subscriptions) are the right source for **live prices on held positions**,
-since that data is already tied to the funded account. For news, analyst price
-targets, earnings calendars, and fundamentals, a dedicated provider is more
-reliable than scraping — leading options are **Financial Modeling Prep (FMP)**
-and **Finnhub**, both with REST APIs covering news, analyst estimates/targets,
-and earnings calendars. This is a decision to finalize with the user before
-Phase 4 (an API key and its cost/free-tier limits are involved); the
-architecture only needs a `MarketIntelligenceProvider` interface so the
-concrete vendor is swappable.
+since that data is already tied to the funded account. For news, analyst
+price targets, earnings calendars, and fundamentals, a dedicated provider is
+more reliable than scraping — the two candidates evaluated were **Financial
+Modeling Prep (FMP)** and **Finnhub**.
+
+**News: decided, Phase 4 — Finnhub.** Chosen over FMP primarily for its
+per-minute (not per-day) free-tier rate limit, which comfortably supports a
+portfolio-aware feature that queries once per held symbol; see
+`docs/NEWS_INTEGRATION.md` §2 for the full comparison and pricing. The
+`NewsProvider` interface (`apps/api/src/integrations/news/news-provider.ts`)
+keeps the vendor swappable regardless.
+
+**Analyst targets/ratings/earnings calendars: not yet decided** — still a
+later phase; the architecture only needs an `AnalystDataSource` interface
+(already scaffolded) so the concrete vendor stays swappable when that phase
+starts.
 
 ## 2. System overview
 
@@ -212,13 +220,41 @@ Full detail, including why data can't be invented mechanically (not just by
 prompt instruction), model configuration, and cost controls:
 `docs/OPENAI_INTEGRATION.md`.
 
-### 3.5 Market data / news layer
+### 3.5 News layer
 
-- One interface, one swappable vendor implementation to start. Used both to
-  enrich the dashboard directly and as data the OpenAI tools read.
-- News/analyst/earnings data is normalized into the DB schema in §6 so the AI
-  and UI both read from our own store (with `fetched_at` timestamps) rather
-  than hitting the vendor API on every request.
+**Implemented in Phase 4** — `apps/api/src/integrations/news/`:
+
+- `finnhub-provider.ts` (`FinnhubNewsProvider implements NewsProvider`) —
+  the only file that imports Finnhub's actual endpoint shapes.
+  `NewsProvider` (`integrations/news/news-provider.ts`) is a
+  vendor-agnostic contract, so a future provider swap or addition means
+  writing one new class, not touching the service, routes, or AI tools.
+- `news-service.ts` (`NewsService`) — fetch/cache/ingest orchestrator,
+  mirroring `IbkrConnectionManager`'s live/cached/unavailable pattern
+  rather than inventing a new one. Ingestion runs every article through
+  `categorizer.ts` (deterministic keyword classification into categories +
+  a low/medium/high relevance tier — no AI/ML in this phase) and
+  `dedup.ts` (exact re-fetch idempotency via a DB unique constraint, plus
+  heuristic cross-query duplicate detection) before upserting into
+  Postgres.
+- `news-integration-data-source.ts` (`NewsIntegrationDataSource implements
+  NewsDataSource`) — resolves "what does this user hold" via the existing
+  `PortfolioDataSource` (inheriting IBKR's own honesty: no fabricated
+  holdings when IBKR isn't connected) and shapes the response; owns
+  nothing vendor-specific.
+- News data is normalized into the DB schema (`NewsArticle`/`NewsEvent`,
+  extending rather than duplicating the Phase 1 schema — see §6) so the AI
+  tools and UI both read from our own store (with `publishedAt` and
+  `retrievedAt` tracked separately) rather than hitting the vendor API on
+  every request.
+- 4 AI tools (`getRecentNews`, `getPortfolioNews`, `getNewsForSymbol`,
+  `getMaterialPortfolioUpdates`), added to the Phase 3 tool architecture
+  the same way every other tool is: each calls `NewsDataSource`, never the
+  provider directly, and returns the same `LiveData<T>` envelope.
+
+Full detail, including provider selection/pricing, the classification rule
+table, deduplication design, caching policy, and known limitations:
+`docs/NEWS_INTEGRATION.md`.
 
 ### 3.6 Database
 
@@ -312,8 +348,13 @@ Matches the spec's list; columns are illustrative, not final DDL:
 - `position_snapshots` — id, snapshot_id, instrument_id, quantity, avg_cost,
   market_price, market_value, unrealized_pnl, weight
 - `market_data_cache` — id, instrument_id, fetched_at, payload
-- `news_items` — id, instrument_id (nullable for portfolio-wide), headline,
-  source, url, published_at, event_type, summary, importance
+- `news_articles` (**implemented, Phase 4** — actual model: `NewsArticle`)
+  — id, instrument_id (nullable), related_symbols (string array), headline,
+  summary, source, provider, external_id (unique with provider — re-fetch
+  idempotency), url, published_at, retrieved_at, relevance
+  (low/medium/high), status (active/duplicate), duplicate_of_id
+- `news_events` (actual model: `NewsEvent`) — id, article_id, event_type
+  (one row per matched category; an article can match more than one)
 - `analyst_estimates` / `analyst_revisions` — id, instrument_id, target,
   rating, previous_value, new_value, source, dated_at
 - `earnings` — id, instrument_id, period, date, estimate_eps, actual_eps

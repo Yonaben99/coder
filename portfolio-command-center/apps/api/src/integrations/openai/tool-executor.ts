@@ -1,11 +1,12 @@
 import { unavailable, type LiveData, type MarketData, type Position } from "@pcc/shared";
-import type { MarketDataSource, PortfolioDataSource } from "../../domain/data-sources/index.js";
+import type { MarketDataSource, NewsDataSource, PortfolioDataSource } from "../../domain/data-sources/index.js";
 import type { IbkrPortfolioDataSource } from "../ibkr/ibkr-portfolio-data-source.js";
 
 export interface ToolServices {
   portfolioDataSource: PortfolioDataSource;
   ibkrPortfolioDataSource: IbkrPortfolioDataSource;
   marketDataSource: MarketDataSource;
+  newsDataSource: NewsDataSource;
 }
 
 export type ToolExecutor = (userId: string, args: Record<string, unknown>, services: ToolServices) => Promise<unknown>;
@@ -115,5 +116,25 @@ export const TOOL_EXECUTORS: Record<string, ToolExecutor> = {
 
   async getPortfolioContext(userId, _args, services) {
     return getPortfolioContext(userId, services);
+  },
+
+  async getRecentNews(_userId, args, services) {
+    const limit = typeof args.limit === "number" ? args.limit : undefined;
+    return services.newsDataSource.getRecentNews(limit);
+  },
+
+  async getPortfolioNews(userId, args, services) {
+    const limit = typeof args.limit === "number" ? args.limit : undefined;
+    return services.newsDataSource.getPortfolioNews(userId, limit);
+  },
+
+  async getNewsForSymbol(_userId, args, services) {
+    const symbol = String(args.symbol ?? "").toUpperCase();
+    const limit = typeof args.limit === "number" ? args.limit : undefined;
+    return services.newsDataSource.getNewsForSymbol(symbol, limit);
+  },
+
+  async getMaterialPortfolioUpdates(userId, _args, services) {
+    return services.newsDataSource.getMaterialPortfolioUpdates(userId);
   },
 };

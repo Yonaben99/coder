@@ -7,6 +7,7 @@ import type { IbkrConnectionManager } from "../integrations/ibkr/connection-mana
 import type { IbkrPortfolioDataSource } from "../integrations/ibkr/ibkr-portfolio-data-source.js";
 import type { PortfolioAiAgent } from "../integrations/openai/agent.js";
 import type { ConversationService } from "../integrations/openai/conversation-service.js";
+import type { NewsService } from "../integrations/news/news-service.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -15,6 +16,7 @@ declare module "fastify" {
     portfolioDataSource: PortfolioDataSource;
     marketDataSource: MarketDataSource;
     newsDataSource: NewsDataSource;
+    newsService: NewsService;
     ibkr: IbkrConnectionManager;
     ibkrPortfolioDataSource: IbkrPortfolioDataSource;
     aiAgent: PortfolioAiAgent;
@@ -28,6 +30,7 @@ export interface AppContext {
   portfolioDataSource: PortfolioDataSource;
   marketDataSource: MarketDataSource;
   newsDataSource: NewsDataSource;
+  newsService: NewsService;
   ibkr: IbkrConnectionManager;
   ibkrPortfolioDataSource: IbkrPortfolioDataSource;
   aiAgent: PortfolioAiAgent;
@@ -40,6 +43,7 @@ export default fp(async function contextPlugin(app: FastifyInstance, context: Ap
   app.decorate("portfolioDataSource", context.portfolioDataSource);
   app.decorate("marketDataSource", context.marketDataSource);
   app.decorate("newsDataSource", context.newsDataSource);
+  app.decorate("newsService", context.newsService);
   app.decorate("ibkr", context.ibkr);
   app.decorate("ibkrPortfolioDataSource", context.ibkrPortfolioDataSource);
   app.decorate("aiAgent", context.aiAgent);

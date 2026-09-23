@@ -1,14 +1,14 @@
 # Security — Portfolio Command Center
 
-Status: Phases 1-3 implemented (auth, IBKR read-only, Portfolio AI). This
-document sets the rules the implementation follows; where a rule is now
-backed by real code, that's called out inline.
+Status: Phases 1-4 implemented (auth, IBKR read-only, Portfolio AI, news).
+This document sets the rules the implementation follows; where a rule is
+now backed by real code, that's called out inline.
 
 ## 1. Secrets
 
-- All secrets (OpenAI API key, market-data/news vendor API key, database
-  credentials, session signing secret) live in **server-side environment
-  variables only** — read by `apps/api`, never bundled into or reachable from
+- All secrets (OpenAI API key, Finnhub API key, database credentials,
+  session signing secret) live in **server-side environment variables
+  only** — read by `apps/api`, never bundled into or reachable from
   `apps/web`'s client code.
 - `.env` (real values) is git-ignored. `.env.example` in this repo lists
   variable names with placeholder values only — see that file.
@@ -16,14 +16,18 @@ backed by real code, that's called out inline.
   secret-shaped fields (`*password*`, `*secret*`, `*token*`, `*apiKey*`) at
   the logger level, not left to call sites to remember.
 - No secret or credential is ever sent to OpenAI, in a prompt, tool result,
-  or system message. OpenAI tool functions return portfolio/market data
+  or system message. OpenAI tool functions return portfolio/market/news data
   only. Confirmed in the Phase 3 implementation:
   `apps/api/src/integrations/openai/tool-executor.ts`'s tools only ever
   return `LiveData<T>` shapes built from `PortfolioDataSource` /
-  `IbkrPortfolioDataSource` — none of them touch IBKR session state,
-  cookies, or credentials, and `OPENAI_API_KEY` is read once in `config.ts`
-  and never returned by any route or written to Postgres. See
-  `docs/OPENAI_INTEGRATION.md` §8.
+  `IbkrPortfolioDataSource` / `NewsDataSource` — none of them touch IBKR
+  session state, cookies, or credentials, and `OPENAI_API_KEY` is read once
+  in `config.ts` and never returned by any route or written to Postgres.
+  See `docs/OPENAI_INTEGRATION.md` §8.
+- Same pattern for the Phase 4 news integration: `FINNHUB_API_KEY` is read
+  once in `config.ts`, passed only to `FinnhubNewsProvider`'s constructor,
+  never returned by any route, never logged, never written to Postgres.
+  See `docs/NEWS_INTEGRATION.md` §10.
 
 ## 2. IBKR credentials — the hard constraint
 
@@ -88,9 +92,14 @@ Rules that follow from this:
   IBKR order endpoints in Phase 7.
 - CSRF protection appropriate to a cookie-authenticated API (SameSite=Strict
   cookies plus origin checking on state-changing requests).
-- Outbound calls to OpenAI and the market-data/news vendor go through a
-  single client module per integration so timeouts, retries, and error
-  handling are consistent and auditable in one place.
+- Outbound calls to OpenAI and the news vendor (Finnhub) go through a
+  single client module per integration (`OpenAIProvider`,
+  `FinnhubHttpClient`) so timeouts, retries, and error handling are
+  consistent and auditable in one place.
+- News endpoints (`/api/v1/news*`) require the same authenticated session as
+  every other route; `getPortfolioNews`/`getPortfolioNewsSummary` are scoped
+  to the requesting user's own IBKR holdings — never another user's. See
+  `docs/NEWS_INTEGRATION.md` §10.
 
 ## 5. Trading safety (Phase 7, not before)
 

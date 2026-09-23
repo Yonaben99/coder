@@ -3,6 +3,7 @@ import type { PrismaClient } from "@pcc/db";
 import type { AppConfig } from "../../config.js";
 import type { IbkrConnectionManager } from "../../integrations/ibkr/connection-manager.js";
 import type { PortfolioAiAgent } from "../../integrations/openai/agent.js";
+import type { NewsService } from "../../integrations/news/news-service.js";
 
 /**
  * Every check here either performs a real test (database) or reports
@@ -144,22 +145,56 @@ export function checkMarketData(config: AppConfig): IntegrationHealth {
     lastCheckedAt: now,
     lastSuccessfulSyncAt: null,
     detail: config.MARKET_INTEL_API_KEY
-      ? "Market data key is set, but the Phase 4 integration is not implemented yet."
-      : "Market data integration ships in Phase 4.",
+      ? "Market data key is set, but standalone market data isn't implemented yet — a later phase. Quotes for held positions come from IBKR."
+      : "Standalone market data (for symbols not held) isn't implemented yet — a later phase.",
   };
 }
 
-export function checkNews(config: AppConfig): IntegrationHealth {
+/**
+ * Mirrors checkOpenAi's honesty rule: "operational" only after a real
+ * successful fetch, never just because FINNHUB_API_KEY is present.
+ */
+export function checkNews(newsService: NewsService): IntegrationHealth {
   const now = new Date().toISOString();
+  const status = newsService.getStatus();
+
+  if (!status.configured) {
+    return {
+      key: "news",
+      label: "News",
+      status: "not_configured",
+      lastCheckedAt: now,
+      lastSuccessfulSyncAt: null,
+      detail: "News integration is not connected. Set FINNHUB_API_KEY and see docs/NEWS_INTEGRATION.md.",
+    };
+  }
+  if (status.lastError && !status.lastSuccessfulFetchAt) {
+    return {
+      key: "news",
+      label: "News",
+      status: "failed",
+      lastCheckedAt: now,
+      lastSuccessfulSyncAt: null,
+      detail: status.lastError,
+    };
+  }
+  if (!status.lastSuccessfulFetchAt) {
+    return {
+      key: "news",
+      label: "News",
+      status: "degraded",
+      lastCheckedAt: now,
+      lastSuccessfulSyncAt: null,
+      detail: "Finnhub key is set but hasn't been verified by a successful fetch yet — open News to test it.",
+    };
+  }
   return {
     key: "news",
     label: "News",
-    status: "not_configured",
+    status: status.lastError ? "degraded" : "operational",
     lastCheckedAt: now,
-    lastSuccessfulSyncAt: null,
-    detail: config.MARKET_INTEL_API_KEY
-      ? "News data key is set, but the Phase 4 integration is not implemented yet."
-      : "News integration ships in Phase 4.",
+    lastSuccessfulSyncAt: status.lastSuccessfulFetchAt,
+    detail: status.lastError ?? undefined,
   };
 }
 
@@ -180,7 +215,8 @@ export async function getAllIntegrationHealth(
   config: AppConfig,
   ibkr: IbkrConnectionManager,
   aiAgent: PortfolioAiAgent,
+  newsService: NewsService,
 ): Promise<IntegrationHealth[]> {
   const database = await checkDatabase(prisma);
-  return [checkIbkr(ibkr), checkOpenAi(aiAgent), checkMarketData(config), checkNews(config), database, checkScheduledJobs()];
+  return [checkIbkr(ibkr), checkOpenAi(aiAgent), checkMarketData(config), checkNews(newsService), database, checkScheduledJobs()];
 }

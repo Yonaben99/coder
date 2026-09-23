@@ -13,7 +13,7 @@ const CAPABILITIES_BY_KEY: Record<string, ConnectionActionCapability[]> = {
 
 export async function connectionsRoutes(app: FastifyInstance): Promise<void> {
   app.get("/connections", { preHandler: buildRequireAuth(app.prisma) }, async () => {
-    const all = await getAllIntegrationHealth(app.prisma, app.config, app.ibkr, app.aiAgent);
+    const all = await getAllIntegrationHealth(app.prisma, app.config, app.ibkr, app.aiAgent, app.newsService);
     const connections: ConnectionInfo[] = all
       .filter((integration) => integration.key !== "scheduled_jobs")
       .map((integration) => ({

@@ -13,17 +13,21 @@ number.
 
 ## Current status
 
-**Phase 3 — Portfolio AI implemented; live testing requires an OpenAI API
-key.** On top of Phase 2's real IBKR integration, the app now has a working
-tool-calling AI agent (`PortfolioAiAgent`) that answers portfolio questions
-by calling real backend tools — never a static prompt, never fabricated
-numbers when a tool reports data unavailable. Neither `OPENAI_API_KEY` nor
-a live IBKR gateway is available in this development sandbox, so end-to-end
-behavior against a real account has not been exercised from here; see
-[`docs/OPENAI_INTEGRATION.md`](./docs/OPENAI_INTEGRATION.md) §9 and
-[`docs/IBKR_INTEGRATION.md`](./docs/IBKR_INTEGRATION.md) §9 for exactly what
-to set up. Market/news data for arbitrary symbols and analyst data are still
-Phase 4+ and remain honest "not connected" placeholders.
+**Phase 4 — News implemented; live testing requires an OpenAI API key and a
+Finnhub API key.** On top of Phase 2's real IBKR integration and Phase 3's
+Portfolio AI, the app now has real, portfolio-aware news: recent market
+news, news for any symbol, and news for the user's actual holdings, each
+classified into deterministic categories with a low/medium/high relevance
+signal — never a fabricated headline or an AI-invented "score". Neither
+`OPENAI_API_KEY`, `FINNHUB_API_KEY`, nor a live IBKR gateway is available in
+this development sandbox, so end-to-end behavior against real accounts has
+not been exercised from here; see
+[`docs/OPENAI_INTEGRATION.md`](./docs/OPENAI_INTEGRATION.md) §9,
+[`docs/IBKR_INTEGRATION.md`](./docs/IBKR_INTEGRATION.md) §9, and
+[`docs/NEWS_INTEGRATION.md`](./docs/NEWS_INTEGRATION.md) §9 for exactly what
+to set up. Analyst targets/ratings, earnings calendars, and the
+risk/catalyst engine are still Phase 5+ and remain honest "not connected"
+placeholders.
 
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — system design, research findings
   (especially IBKR's actual retail-account authentication constraints), and
@@ -38,8 +42,11 @@ Phase 4+ and remain honest "not connected" placeholders.
 - [`docs/OPENAI_INTEGRATION.md`](./docs/OPENAI_INTEGRATION.md) — AI
   architecture, tools, system prompt, conversation model, security, and cost
   controls.
+- [`docs/NEWS_INTEGRATION.md`](./docs/NEWS_INTEGRATION.md) — news provider
+  selection/pricing, data model, materiality/relevance rules,
+  deduplication, caching, endpoints, and setup/troubleshooting.
 
-Phase 4 (news and market intelligence) has not started and will not start
+Phase 5 (risk, scenarios, catalysts) has not started and will not start
 without explicit sign-off.
 
 ## How the architecture works (short version)
@@ -62,9 +69,11 @@ without explicit sign-off.
   portfolio state. **Implemented** (Phase 3, read-only) in
   `apps/api/src/integrations/openai/`. See `ARCHITECTURE.md` §3.4,
   `SECURITY.md` §"AI", and `docs/OPENAI_INTEGRATION.md`.
-- **Market data / news:** a vendor-agnostic interface, backed initially by
-  either Financial Modeling Prep or Finnhub (final choice made with the user
-  before Phase 4).
+- **News:** a vendor-agnostic interface (`NewsDataSource`), backed by
+  Finnhub (chosen over Financial Modeling Prep — see
+  `docs/NEWS_INTEGRATION.md` §2). **Implemented** (Phase 4, read-only) in
+  `apps/api/src/integrations/news/`. See `ARCHITECTURE.md` §3.5,
+  `SECURITY.md` §1, and `docs/NEWS_INTEGRATION.md`.
 
 Full detail, including the data-flow walkthrough and the reasoning behind
 each choice, is in `ARCHITECTURE.md`.
@@ -105,15 +114,17 @@ this was built and tested against).
 3. **Configure environment variables.** Copy `.env.example` to `.env` at the
    repo root and fill in at least `DATABASE_URL`, `SESSION_SECRET`, and
    `APP_BASE_URL` (`http://localhost:3000` for local dev). Leave
-   market-data/news unset — those are still Phase 4+, and the app reports
-   them as "not configured" rather than failing to start.
-   `IBKR_GATEWAY_BASE_URL` and `OPENAI_API_KEY` are both optional but now
-   real: set `IBKR_GATEWAY_BASE_URL` once you have your own Client Portal
-   Gateway running and authenticated (see
-   [`docs/IBKR_INTEGRATION.md`](./docs/IBKR_INTEGRATION.md) §9), and set
+   `MARKET_INTEL_*` unset — standalone market/analyst data is still Phase
+   5+, and the app reports it as "not configured" rather than failing to
+   start. `IBKR_GATEWAY_BASE_URL`, `OPENAI_API_KEY`, and `FINNHUB_API_KEY`
+   are all optional but now real: set `IBKR_GATEWAY_BASE_URL` once you have
+   your own Client Portal Gateway running and authenticated (see
+   [`docs/IBKR_INTEGRATION.md`](./docs/IBKR_INTEGRATION.md) §9), set
    `OPENAI_API_KEY` to enable Portfolio AI (see
-   [`docs/OPENAI_INTEGRATION.md`](./docs/OPENAI_INTEGRATION.md) §9) — either
-   left unset just shows the matching "not connected" placeholder instead of
+   [`docs/OPENAI_INTEGRATION.md`](./docs/OPENAI_INTEGRATION.md) §9), and set
+   `FINNHUB_API_KEY` to enable News (see
+   [`docs/NEWS_INTEGRATION.md`](./docs/NEWS_INTEGRATION.md) §9) — any left
+   unset just shows the matching "not connected" placeholder instead of
    failing to start.
 
 4. **Run the Prisma migration** against your local database:
@@ -168,10 +179,10 @@ pnpm --filter <pkg> build
 See [`.env.example`](./.env.example) for the full list. In short: a Postgres
 connection string, a session secret, the app's own base URL (for CORS), the
 IBKR gateway's base URL (not credentials — the gateway itself handles
-login), an OpenAI API key, and a market-data/news vendor API key. Nothing
-here is committed with real values; copy `.env.example` to `.env` and fill
-it in locally. The frontend additionally reads `NEXT_PUBLIC_API_BASE_URL`
-(not secret — just where the browser sends requests) from its own
+login), an OpenAI API key, and a Finnhub API key (news). Nothing here is
+committed with real values; copy `.env.example` to `.env` and fill it in
+locally. The frontend additionally reads `NEXT_PUBLIC_API_BASE_URL` (not
+secret — just where the browser sends requests) from its own
 `apps/web/.env.local`.
 
 ## Development phases
@@ -182,8 +193,8 @@ Summary:
 0. Architecture and environment
 1. Repository, frontend, backend, database, auth, navigation
 2. IBKR read-only integration
-3. OpenAI integration and tool calling *(current)*
-4. News and market intelligence
+3. OpenAI integration and tool calling
+4. News and market intelligence *(current)*
 5. Risk, scenarios, catalysts
 6. Monitoring and alerts
 7. Trading with explicit confirmation

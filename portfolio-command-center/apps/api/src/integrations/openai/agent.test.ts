@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { unavailable, type AccountSummary, type LiveData, type MarketData, type Position } from "@pcc/shared";
+import { unavailable, type AccountSummary, type LiveData, type MarketData, type NewsItem, type Position } from "@pcc/shared";
 import type { AIChatMessage, AIProvider, AIProviderResponse, AIProviderStatus, AIToolDefinition } from "../../domain/data-sources/ai-provider.js";
-import type { MarketDataSource, PortfolioDataSource } from "../../domain/data-sources/index.js";
+import type { MarketDataSource, NewsDataSource, PortfolioDataSource } from "../../domain/data-sources/index.js";
 import type { IbkrPortfolioDataSource } from "../ibkr/ibkr-portfolio-data-source.js";
 import { PortfolioAiAgent } from "./agent.js";
 import type { ConversationService } from "./conversation-service.js";
@@ -51,7 +51,15 @@ function fakeServices() {
     getQuote: async (): Promise<LiveData<MarketData>> => unavailable("market-data", "not connected"),
     getQuotes: async (): Promise<LiveData<MarketData[]>> => unavailable("market-data", "not connected"),
   };
-  return { portfolioDataSource, ibkrPortfolioDataSource, marketDataSource };
+  const newsDataSource: NewsDataSource = {
+    getRecentNews: async (): Promise<LiveData<NewsItem[]>> => unavailable("news", "News integration is not connected yet."),
+    getPortfolioNews: async (): Promise<LiveData<NewsItem[]>> => unavailable("news", "News integration is not connected yet."),
+    getNewsForSymbol: async (): Promise<LiveData<NewsItem[]>> => unavailable("news", "News integration is not connected yet."),
+    getPortfolioNewsSummary: async () => unavailable("news", "News integration is not connected yet."),
+    getMaterialPortfolioUpdates: async (): Promise<LiveData<NewsItem[]>> => unavailable("news", "News integration is not connected yet."),
+    getArticleById: async () => null,
+  };
+  return { portfolioDataSource, ibkrPortfolioDataSource, marketDataSource, newsDataSource };
 }
 
 describe("PortfolioAiAgent — not configured", () => {

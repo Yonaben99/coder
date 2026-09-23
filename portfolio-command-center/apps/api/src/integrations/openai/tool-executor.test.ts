@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { unavailable, type AccountSummary, type LiveData, type MarketData, type PortfolioAllocation, type Position } from "@pcc/shared";
-import type { MarketDataSource, PortfolioDataSource } from "../../domain/data-sources/index.js";
+import {
+  unavailable,
+  type AccountSummary,
+  type LiveData,
+  type MarketData,
+  type NewsItem,
+  type PortfolioAllocation,
+  type PortfolioNewsSummary,
+  type Position,
+} from "@pcc/shared";
+import type { MarketDataSource, NewsDataSource, PortfolioDataSource } from "../../domain/data-sources/index.js";
 import type { IbkrPortfolioDataSource } from "../ibkr/ibkr-portfolio-data-source.js";
 import { TOOL_EXECUTORS, type ToolServices } from "./tool-executor.js";
 import { PORTFOLIO_AI_TOOLS } from "./tool-definitions.js";
@@ -81,7 +90,34 @@ function fakeServices(overrides: Partial<ToolServices> = {}): ToolServices {
     getQuotes: async (): Promise<LiveData<MarketData[]>> => unavailable("market-data", "Market data integration is not connected yet."),
   };
 
-  return { portfolioDataSource, ibkrPortfolioDataSource, marketDataSource, ...overrides };
+  const SAMPLE_ARTICLE: NewsItem = {
+    id: "article-1",
+    symbol: "WDC",
+    relatedSymbols: ["WDC"],
+    headline: "Western Digital reports quarterly earnings beat",
+    source: "Reuters",
+    provider: "finnhub",
+    url: "https://example.com/article-1",
+    publishedAt: new Date().toISOString(),
+    retrievedAt: new Date().toISOString(),
+    categories: ["earnings"],
+    relevance: "high",
+    summary: null,
+  };
+
+  const newsDataSource: NewsDataSource = {
+    getRecentNews: async (): Promise<LiveData<NewsItem[]>> => ({ data: [SAMPLE_ARTICLE], meta: LIVE_META }),
+    getPortfolioNews: async (): Promise<LiveData<NewsItem[]>> => ({ data: [SAMPLE_ARTICLE], meta: LIVE_META }),
+    getNewsForSymbol: async (): Promise<LiveData<NewsItem[]>> => ({ data: [SAMPLE_ARTICLE], meta: LIVE_META }),
+    getPortfolioNewsSummary: async (): Promise<LiveData<PortfolioNewsSummary[]>> => ({
+      data: [{ symbol: "WDC", updateCount: 1 }],
+      meta: LIVE_META,
+    }),
+    getMaterialPortfolioUpdates: async (): Promise<LiveData<NewsItem[]>> => ({ data: [SAMPLE_ARTICLE], meta: LIVE_META }),
+    getArticleById: async (): Promise<NewsItem | null> => SAMPLE_ARTICLE,
+  };
+
+  return { portfolioDataSource, ibkrPortfolioDataSource, marketDataSource, newsDataSource, ...overrides };
 }
 
 describe("tool-definitions and tool-executor stay in sync", () => {
@@ -167,6 +203,59 @@ describe("unimplemented-feature tools are honest, not fake", () => {
 
   it("getPortfolioPerformance reports unavailable (no snapshot history yet)", async () => {
     const result = (await TOOL_EXECUTORS.getPortfolioPerformance!("user-1", {}, fakeServices())) as LiveData<unknown>;
+    expect(result.meta.status).toBe("unavailable");
+  });
+});
+
+describe("news tools delegate to NewsDataSource, never a provider directly", () => {
+  it("getRecentNews returns the NewsDataSource result untouched", async () => {
+    const result = (await TOOL_EXECUTORS.getRecentNews!("user-1", {}, fakeServices())) as LiveData<NewsItem[]>;
+    expect(result.data).toHaveLength(1);
+    expect(result.data?.[0]?.headline).toContain("earnings");
+  });
+
+  it("getPortfolioNews delegates with the userId, not a fabricated symbol list", async () => {
+    const result = (await TOOL_EXECUTORS.getPortfolioNews!("user-1", {}, fakeServices())) as LiveData<NewsItem[]>;
+    expect(result.data).toHaveLength(1);
+  });
+
+  it("getNewsForSymbol uppercases the symbol before delegating", async () => {
+    let seenSymbol: string | null = null;
+    const services = fakeServices({
+      newsDataSource: {
+        getRecentNews: async () => ({ data: [], meta: LIVE_META }),
+        getPortfolioNews: async () => ({ data: [], meta: LIVE_META }),
+        getNewsForSymbol: async (symbol: string) => {
+          seenSymbol = symbol;
+          return { data: [], meta: LIVE_META };
+        },
+        getPortfolioNewsSummary: async () => ({ data: [], meta: LIVE_META }),
+        getMaterialPortfolioUpdates: async () => ({ data: [], meta: LIVE_META }),
+        getArticleById: async () => null,
+      },
+    });
+    await TOOL_EXECUTORS.getNewsForSymbol!("user-1", { symbol: "wdc" }, services);
+    expect(seenSymbol).toBe("WDC");
+  });
+
+  it("getMaterialPortfolioUpdates delegates to NewsDataSource's own relevance filtering", async () => {
+    const result = (await TOOL_EXECUTORS.getMaterialPortfolioUpdates!("user-1", {}, fakeServices())) as LiveData<NewsItem[]>;
+    expect(result.data?.[0]?.relevance).toBe("high");
+  });
+
+  it("news tools surface an honest unavailable reason when news isn't connected", async () => {
+    const services = fakeServices({
+      newsDataSource: {
+        getRecentNews: async () => unavailable("news", "News integration is not connected yet."),
+        getPortfolioNews: async () => unavailable("news", "News integration is not connected yet."),
+        getNewsForSymbol: async () => unavailable("news", "News integration is not connected yet."),
+        getPortfolioNewsSummary: async () => unavailable("news", "News integration is not connected yet."),
+        getMaterialPortfolioUpdates: async () => unavailable("news", "News integration is not connected yet."),
+        getArticleById: async () => null,
+      },
+    });
+    const result = (await TOOL_EXECUTORS.getRecentNews!("user-1", {}, services)) as LiveData<NewsItem[]>;
+    expect(result.data).toBeNull();
     expect(result.meta.status).toBe("unavailable");
   });
 });

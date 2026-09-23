@@ -14,6 +14,7 @@ export async function healthRoutesV1(app: FastifyInstance): Promise<void> {
       request.server.config,
       request.server.ibkr,
       request.server.aiAgent,
+      request.server.newsService,
     );
     const overall = services.some((s) => s.status === "failed")
       ? "degraded"

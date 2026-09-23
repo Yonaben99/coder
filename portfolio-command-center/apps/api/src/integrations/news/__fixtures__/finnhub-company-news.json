@@ -1,0 +1,24 @@
+[
+  {
+    "id": 7001,
+    "category": "company",
+    "datetime": 1732104000,
+    "headline": "Western Digital reports quarterly earnings beat, raises full-year guidance",
+    "image": "https://example.com/image1.png",
+    "related": "WDC",
+    "source": "Reuters",
+    "summary": "Western Digital posted quarterly revenue and EPS above analyst estimates and raised its full-year guidance.",
+    "url": "https://example.com/wdc-earnings-beat?utm_source=newsletter"
+  },
+  {
+    "id": 7002,
+    "category": "company",
+    "datetime": 1732017600,
+    "headline": "Western Digital announces new partnership with cloud storage provider",
+    "image": "",
+    "related": "WDC",
+    "source": "Business Wire",
+    "summary": "The companies will collaborate on next-generation storage solutions.",
+    "url": "https://example.com/wdc-partnership"
+  }
+]
