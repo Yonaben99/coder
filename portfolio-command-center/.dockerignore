@@ -1,0 +1,15 @@
+# Keeps Docker build context small and never ships local secrets/build
+# artifacts into an image layer.
+.env
+.env.local
+.env.*.local
+**/node_modules
+**/.next
+**/dist
+**/coverage
+**/.turbo
+**/*.tsbuildinfo
+.git
+.github
+docs
+*.md

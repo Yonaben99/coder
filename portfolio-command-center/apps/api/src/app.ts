@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import cookie from "@fastify/cookie";
+import rateLimit from "@fastify/rate-limit";
 import type { PrismaClient } from "@pcc/db";
 import type { AppConfig } from "./config.js";
 import { buildLoggerOptions } from "./logger.js";
@@ -52,7 +53,19 @@ export interface BuildAppOptions {
 }
 
 export async function buildApp({ config, prisma }: BuildAppOptions): Promise<FastifyInstance> {
-  const app = Fastify({ logger: buildLoggerOptions(config) });
+  const app = Fastify({
+    logger: buildLoggerOptions(config),
+    // Production deployments sit behind a platform load balancer/reverse
+    // proxy (see docs/DEPLOYMENT.md) — trust its X-Forwarded-* headers so
+    // rate limiting keys on the real client IP, not the proxy's. In dev/test
+    // there's no proxy, so this is a no-op.
+    trustProxy: config.NODE_ENV === "production",
+    // Explicit rather than relying on Fastify's default — documents the
+    // limit and caps request bodies well above any real payload this app
+    // sends (auth credentials, alert-rule config, chat messages) while
+    // still blocking abusive oversized requests. See SECURITY.md §4.
+    bodyLimit: 1024 * 1024, // 1 MiB
+  });
 
   await app.register(helmet);
   await app.register(cors, {
@@ -60,6 +73,18 @@ export async function buildApp({ config, prisma }: BuildAppOptions): Promise<Fas
     credentials: true,
   });
   await app.register(cookie, { secret: config.SESSION_SECRET });
+  // Global rate limit as a baseline abuse guard; auth routes below get a
+  // much stricter per-route limit against credential stuffing (SECURITY.md
+  // §3). 429s carry no sensitive detail.
+  await app.register(rateLimit, {
+    global: true,
+    max: 300,
+    timeWindow: "1 minute",
+    hook: "onRequest",
+    errorResponseBuilder: () => ({
+      error: { code: "RATE_LIMITED", message: "Too many requests — please slow down and try again shortly." },
+    }),
+  });
 
   const ibkr = new IbkrConnectionManager(config.IBKR_GATEWAY_BASE_URL ?? null);
   const ibkrPortfolioDataSource = new IbkrPortfolioDataSource(ibkr, prisma);

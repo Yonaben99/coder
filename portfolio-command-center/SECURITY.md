@@ -1,9 +1,10 @@
 # Security — Portfolio Command Center
 
-Status: Phases 1-6 implemented (auth, IBKR read-only, Portfolio AI, news,
-analysts/earnings/catalysts/risk, alerts and monitoring). This document
-sets the rules the implementation follows; where a rule is now backed by
-real code, that's called out inline.
+Status: Phases 1-7 implemented (auth, IBKR read-only, Portfolio AI, news,
+analysts/earnings/catalysts/risk, alerts and monitoring, production
+deployment readiness). This document sets the rules the implementation
+follows; where a rule is now backed by real code, that's called out
+inline.
 
 ## 1. Secrets
 
@@ -86,19 +87,41 @@ Rules that follow from this:
 - Every backend route re-checks that the authenticated session's user owns
   the resource being accessed — authorization is enforced server-side on
   every request, never inferred from what the frontend chose to render.
-- Rate limiting / lockout on login attempts to resist credential stuffing
+- Rate limiting on login/signup attempts to resist credential stuffing
   against our own login (separate from, and no substitute for, IBKR's own
-  account security).
+  account security). **Implemented in Phase 7**: `@fastify/rate-limit`
+  enforces 10 requests/minute/IP specifically on `/auth/login` and
+  `/auth/signup` (`apps/api/src/routes/auth.ts`), on top of a 300/min/IP
+  app-wide default (`apps/api/src/app.ts`). A full account-lockout
+  mechanism (tracking failed attempts per account, not just per IP) is not
+  implemented — the IP-based rate limit is judged sufficient for a
+  single/small-N-user personal app; revisit if that assumption changes.
 
 ## 4. API security
 
 - All backend endpoints require authentication except the login/signup
   routes themselves.
 - Input validation on every route (schema validation, e.g. via Fastify's
-  built-in JSON Schema/TypeBox support) — especially anything that reaches
-  IBKR order endpoints in Phase 7.
+  built-in JSON Schema/TypeBox support) — especially anything that will
+  reach IBKR order endpoints once trading (DEVELOPMENT_PLAN.md Phase 8) is
+  built.
 - CSRF protection appropriate to a cookie-authenticated API (SameSite=Strict
-  cookies plus origin checking on state-changing requests).
+  cookies plus a single-origin CORS allowlist on `APP_BASE_URL` — no
+  wildcard origin anywhere). No separate CSRF token layer: a
+  `SameSite=Strict` cookie is not attached to any cross-site request a
+  browser makes (top-level navigation included), which is this app's whole
+  CSRF attack surface given it does no cross-site form posting of its own.
+- **Implemented in Phase 7**: an explicit 1 MiB `bodyLimit` on the Fastify
+  instance, `trustProxy` enabled only in production (so rate limiting and
+  any future IP-based logic key on the real client IP behind a hosting
+  provider's load balancer, not the proxy's), and a `GET /ready` readiness
+  probe (real `SELECT 1`) alongside the pre-existing `GET /health`
+  liveness probe — both exempt from rate limiting so a platform's health
+  polling is never throttled. See `docs/DEPLOYMENT.md` §10, §13.
+- SQL injection: audited repo-wide in Phase 7 — every database access goes
+  through Prisma's query builder or a parameterized tagged-template
+  `` $queryRaw`SELECT 1` ``; zero uses of `$queryRawUnsafe`,
+  `$executeRawUnsafe`, or string-concatenated SQL anywhere in the codebase.
 - Outbound calls to OpenAI and the news vendor (Finnhub) go through a
   single client module per integration (`OpenAIProvider`,
   `FinnhubHttpClient`) so timeouts, retries, and error handling are
@@ -118,9 +141,11 @@ Rules that follow from this:
   pipeline has no prompt-injection surface. See
   `docs/ALERTS_AND_MONITORING.md` §11.
 
-## 5. Trading safety (Phase 7, not before)
+## 5. Trading safety (Phase 8, not before)
 
-- No order-placement endpoint exists before Phase 7.
+- No order-placement endpoint exists before Phase 8 (DEVELOPMENT_PLAN.md)
+  — explicitly, still, after Phase 7's production-deployment work: this
+  phase made the app deployable, it did not add trading.
 - When it exists: every BUY/SELL/CLOSE/MODIFY/CANCEL requires an explicit,
   itemized user confirmation step (symbol, side, quantity, order type,
   estimated cost) in the same request/response cycle as submission — no

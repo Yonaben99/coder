@@ -13,9 +13,10 @@ number.
 
 ## Current status
 
-**Phases 1-6 implemented; live testing requires an OpenAI API key and a
-Finnhub API key.** On top of Phase 2's real IBKR integration, Phase 3's
-Portfolio AI, and Phase 4's news integration, the app now has:
+**Phases 1-7 implemented; live testing requires an OpenAI API key, a
+Finnhub API key, and a real hosting deploy.** On top of Phase 2's real
+IBKR integration, Phase 3's Portfolio AI, and Phase 4's news integration,
+the app now has:
 
 - **Analysts, earnings, catalysts, risk (Phase 5)** — analyst consensus and
   rating changes, an earnings calendar, a deterministic catalyst engine
@@ -30,6 +31,18 @@ Portfolio AI, and Phase 4's news integration, the app now has:
   Detection is 100% deterministic — no LLM call happens anywhere in the
   alert pipeline. See
   [`docs/ALERTS_AND_MONITORING.md`](./docs/ALERTS_AND_MONITORING.md).
+- **Production readiness (Phase 7)** — Dockerfiles for both apps, a
+  reference `docker-compose.prod.yml`, environment-aware config validation
+  (production refuses to start with a weak `SESSION_SECRET` or a
+  non-HTTPS `APP_BASE_URL`), rate limiting (global + a strict limit on
+  login/signup), a real `/ready` readiness probe, PWA support (installable
+  on iPhone), and a hosting-provider evaluation with exact deploy steps.
+  Two real production-startup bugs were found and fixed this phase (an
+  internal package resolution issue that broke `node dist/index.js`, and a
+  Next.js monorepo file-tracing gap) — see
+  [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) §9-10 for what broke and how
+  it was verified fixed. No trading/order execution — that remains
+  deliberately out of scope.
 
 Neither `OPENAI_API_KEY`, `FINNHUB_API_KEY`, nor a live IBKR gateway is
 available in this development sandbox, so end-to-end behavior against real
@@ -64,9 +77,14 @@ no-op with zero authenticated users/configured providers) — see
 - [`docs/ALERTS_AND_MONITORING.md`](./docs/ALERTS_AND_MONITORING.md) —
   scheduler/job architecture, alert types, cooldown/dedup, notification
   architecture, observability, endpoints, and known limitations.
+- [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) — hosting provider
+  evaluation, environment separation, secrets, database migrations and
+  backups, HTTPS, production build details (including two real bugs found
+  and fixed this phase), scheduler behavior in production, security
+  headers/CORS/rate limiting, cost estimate, and troubleshooting.
 
-Phase 7 (production deployment, security/performance hardening, trading)
-has not started and will not start without explicit sign-off.
+Trading/order execution (originally scoped as a further phase) remains
+deliberately out of scope and has not been started.
 
 ## How the architecture works (short version)
 
@@ -213,14 +231,28 @@ pnpm --filter <pkg> build
 
 ## Required environment variables
 
-See [`.env.example`](./.env.example) for the full list. In short: a Postgres
-connection string, a session secret, the app's own base URL (for CORS), the
-IBKR gateway's base URL (not credentials — the gateway itself handles
-login), an OpenAI API key, and a Finnhub API key (news). Nothing here is
-committed with real values; copy `.env.example` to `.env` and fill it in
-locally. The frontend additionally reads `NEXT_PUBLIC_API_BASE_URL` (not
-secret — just where the browser sends requests) from its own
-`apps/web/.env.local`.
+See [`.env.example`](./.env.example) for the full list (development), or
+[`.env.production.example`](./.env.production.example) for production —
+the schema in `apps/api/src/config.ts` enforces stricter rules
+(`SESSION_SECRET` ≥32 chars, `APP_BASE_URL` must be `https://`) when
+`NODE_ENV=production`. In short: a Postgres connection string, a session
+secret, the app's own base URL (for CORS), the IBKR gateway's base URL
+(not credentials — the gateway itself handles login), an OpenAI API key,
+and a Finnhub API key (news). Nothing here is committed with real values;
+copy `.env.example` to `.env` and fill it in locally. The frontend
+additionally reads `NEXT_PUBLIC_API_BASE_URL` (not secret — just where the
+browser sends requests) from its own `apps/web/.env.local`
+(`apps/web/.env.example` documents it).
+
+## Deploying to production
+
+See [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) for the full guide:
+hosting provider evaluation (Railway recommended), `apps/api/Dockerfile` +
+`apps/web/Dockerfile` + `docker-compose.prod.yml` for a self-hosted path,
+exact deploy steps, database migrations/backups, and a cost estimate. The
+app is designed to deploy correctly with `OPENAI_API_KEY` and
+`FINNHUB_API_KEY` left unset — every dependent feature shows an honest
+"not connected" state instead of failing.
 
 ## Development phases
 
@@ -233,8 +265,8 @@ Summary:
 3. OpenAI integration and tool calling
 4. News and market intelligence
 5. Analysts, earnings, catalysts, risk
-6. Alerts and monitoring *(current)*
-7. Production deployment, hardening, trading with explicit confirmation
+6. Alerts and monitoring
+7. Production deployment and hardening *(current)*
 
 ## A note on the watchlist tickers
 

@@ -18,10 +18,15 @@ interface CredentialsBody {
   password: string;
 }
 
+// Stricter than the app-wide default (see app.ts) — these are the two
+// routes credential-stuffing/brute-force actually targets. Keyed by IP via
+// the global rate-limit plugin's default keyGenerator. See SECURITY.md §3.
+const AUTH_RATE_LIMIT = { max: 10, timeWindow: "1 minute" };
+
 export async function authRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: CredentialsBody }>(
     "/auth/signup",
-    { schema: { body: credentialsSchema } },
+    { schema: { body: credentialsSchema }, config: { rateLimit: AUTH_RATE_LIMIT } },
     async (request, reply) => {
       const { email, password } = request.body;
 
@@ -49,7 +54,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
   app.post<{ Body: CredentialsBody }>(
     "/auth/login",
-    { schema: { body: credentialsSchema } },
+    { schema: { body: credentialsSchema }, config: { rateLimit: AUTH_RATE_LIMIT } },
     async (request, reply) => {
       const { email, password } = request.body;
 

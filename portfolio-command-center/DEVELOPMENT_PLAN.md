@@ -2,11 +2,9 @@
 
 Each phase ends with something real and testable — never a mock standing in
 for an integration that phase was supposed to build. We do not start a phase
-until the previous one is confirmed working. **Phases 0-6 are implemented.
-Do not begin Phase 7 (trading with explicit confirmation, plus production
-deployment, security hardening, performance hardening, operational
-readiness, backup/recovery, production secrets management, and final
-end-to-end validation) without explicit sign-off.**
+until the previous one is confirmed working. **Phases 0-7 are implemented.
+Do not begin Phase 8 (trading with explicit confirmation) without explicit
+sign-off.**
 
 ## Phase 0 — Architecture and environment
 
@@ -302,7 +300,76 @@ silence — met and tested with deterministic fixtures; the live "system
 continuously monitors a real portfolio" experience is blocked on the same
 IBKR/OpenAI/Finnhub credentials the earlier phases lack in this sandbox.
 
-## Phase 7 — Trading with explicit confirmation
+## Phase 7 — Production deployment and hardening ✅ (implemented; actual deploy requires a hosting account this sandbox doesn't have)
+
+**Goal:** take the app from a development/sandbox application to a
+production-ready deployed web application — reachable over HTTPS,
+persistent, secure, and honest about `OPENAI_API_KEY`/`FINNHUB_API_KEY`/
+IBKR remaining unset. No trading, no autonomous behavior — explicitly out
+of scope for this phase.
+
+- [x] Hosting provider evaluation (Railway, Fly.io, Render, self-hosted
+      VPS) against persistent-process support, managed Postgres, secrets,
+      HTTPS, deploy workflow, backups, and cost — Railway recommended, Fly
+      documented as the fallback for IBKR-gateway colocation. See
+      `docs/DEPLOYMENT.md` §2.
+- [x] `apps/api/Dockerfile`, `apps/web/Dockerfile` (multi-stage, non-root
+      runtime user), and a reference `docker-compose.prod.yml`
+      (Postgres + api + web).
+- [x] Environment separation: `.env.production.example`, and
+      `apps/api/src/config.ts` now enforces production-only invariants
+      (`SESSION_SECRET` ≥32 chars, `APP_BASE_URL` must be `https://`) via
+      a zod `superRefine`, covered by `apps/api/src/config.test.ts`.
+- [x] Two real production-startup bugs found and fixed by actually running
+      the compiled/bundled output (not just `tsc --noEmit`): apps/api's
+      `dist/index.js` couldn't resolve `@pcc/config`/`@pcc/shared`/`@pcc/db`
+      under plain Node (fixed via an esbuild bundle,
+      `apps/api/build.mjs`), and Next's monorepo file tracer excluded
+      `packages/shared` from the standalone output (fixed via
+      `outputFileTracingRoot`). Both verified fixed by actually running
+      the production artifacts and hitting real endpoints — see
+      `docs/DEPLOYMENT.md` §9-11.
+- [x] Backend hardening: `@fastify/rate-limit` (global 300/min/IP + a
+      strict 10/min/IP on login/signup — closing a gap SECURITY.md had
+      documented but not implemented), explicit `bodyLimit`, `trustProxy`
+      in production, a new `GET /ready` readiness probe (real `SELECT 1`)
+      alongside the existing `GET /health` liveness probe, both exempt
+      from rate limiting.
+- [x] Repo-wide audit: no committed secrets, no `.env` in git history, no
+      hardcoded fake financial data outside test fixtures.
+- [x] User isolation re-verified explicitly: a new
+      `apps/api/test/user-isolation.test.ts` sweeps 22 protected routes
+      for 401-when-unauthenticated, and proves (against a real Postgres
+      instance, two real signed-up users) that alerts, AI conversations,
+      and historical risk metrics never cross between users — in addition
+      to the isolation tests each feature already had from Phases 4-6.
+- [x] PWA/mobile: `app/manifest.ts`, code-generated `app/icon.tsx` /
+      `app/apple-icon.tsx`, `appleWebApp` metadata for iOS installability,
+      security headers (`X-Frame-Options`, `X-Content-Type-Options`,
+      `Referrer-Policy`, `Permissions-Policy`) applied to every route via
+      `next.config.ts`.
+- [x] `docs/DEPLOYMENT.md` — architecture, provider evaluation, env
+      separation, secrets, auth review, database/backups, HTTPS, frontend
+      and backend production-build details, scheduler-in-production
+      behavior, security posture, observability, image-size follow-up,
+      external-integration setup steps, cost estimate, troubleshooting.
+- [ ] **Actual deployment to a live URL** — not possible from this
+      sandbox: no hosting-provider credentials exist here, and Docker Hub
+      image pulls through this sandbox's egress proxy failed (`429`, then
+      a signed-URL `403` on retry). Every build step each Dockerfile runs
+      was instead executed manually, in order, outside Docker, against a
+      real Postgres instance, producing a working server each time (full
+      transcript in `docs/DEPLOYMENT.md` §11) — the Docker layer itself is
+      the only untested step. Exact commands to deploy for real are in
+      `docs/DEPLOYMENT.md` §11.
+
+**Exit criteria:** the application is fully prepared for a real deploy —
+correct Dockerfiles, correct production builds (verified by actually
+running them), honest `NOT_CONFIGURED` states for every unset external
+integration, and exact deployment instructions — met, pending only the
+hosting-provider access this sandbox doesn't have.
+
+## Phase 8 — Trading with explicit confirmation
 
 **Goal:** controlled order placement, never silent.
 

@@ -5,6 +5,12 @@ import { AppShell } from "@/components/layout/app-shell";
 export const metadata: Metadata = {
   title: "Portfolio Command Center",
   description: "A real-data personal investment portfolio operating system.",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    title: "PCC",
+    statusBarStyle: "black-translucent",
+  },
 };
 
 export const viewport: Viewport = {

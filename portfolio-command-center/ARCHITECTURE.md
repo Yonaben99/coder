@@ -170,9 +170,9 @@ backend.
   IBKR isn't configured/authenticated, so no separate "not connected" stub
   class is needed.
 - Read-only, as designed: no file in this module calls an order endpoint.
-  No order endpoints are called until Phase 7, and even then every order
-  requires explicit user confirmation in the UI before the backend calls
-  IBKR.
+  No order endpoints are called until the trading phase (DEVELOPMENT_PLAN.md
+  Phase 8), and even then every order requires explicit user confirmation in
+  the UI before the backend calls IBKR.
 - The rest of the app depends only on `PortfolioDataSource`, so a future
   change (e.g. IBKR's own OAuth 2.0 individual rollout, or adding a second
   broker) means writing a new class implementing that interface — routes,
@@ -365,19 +365,56 @@ detector table, the cooldown/dedup mechanism, and known limitations:
   additionally write a durable `SystemEvent` row (§3.7) — job
   started/completed/failed, alert generated/suppressed — queryable
   independent of log retention.
-- Error tracking (Sentry or equivalent) — not yet wired; a Phase 7
-  production-hardening concern, not required for the current phases.
+- Error tracking (Sentry or equivalent) — still not wired. `SENTRY_DSN` is
+  a config placeholder read by `apps/api/src/config.ts` but no SDK
+  integration exists yet; structured logs plus `SystemEvent` rows are the
+  primary production debugging tool until there's a real Sentry account to
+  point it at. See `docs/DEPLOYMENT.md` §14.
 
-### 3.11 Deployment
+### 3.11 Deployment (Phase 7 — implemented)
 
-- Both the backend (with its IBKR Gateway sidecar) and Postgres need to run
-  somewhere as long-lived containers — a VPS, Fly.io, Railway, or similar.
-  Serverless hosting (e.g. Vercel functions) does not fit the backend for the
-  reasons in §3.2, though it can still host the Next.js frontend if the
-  frontend and backend are deployed separately.
-- Local development mirrors production topology via Docker Compose:
-  `web`, `api`, `ibkr-gateway`, `postgres` (and later `redis` if the job
-  queue graduates from in-process cron).
+- Both the backend (with its future IBKR Gateway sidecar) and Postgres run
+  as long-lived containers — a VPS, Fly.io, or Railway (the recommended
+  provider; see `docs/DEPLOYMENT.md` §2 for the full evaluation and
+  reasoning). Serverless hosting (e.g. Vercel functions) does not fit the
+  backend for the reasons in §3.2 — the Phase 6 `Scheduler` self-reschedules
+  jobs inside the running process with no external cron calling back in, so
+  a platform that spins the process down between requests would silently
+  stop it.
+- `apps/api/Dockerfile` and `apps/web/Dockerfile` (repo root, multi-stage,
+  non-root runtime user) plus a reference `docker-compose.prod.yml`
+  (Postgres + api + web) cover the self-hosted path; a managed platform
+  build (Railway/Fly/Render) uses the same two Dockerfiles directly. Both
+  must be built with the **monorepo root** as Docker build context — see
+  the comment at the top of each Dockerfile.
+- `apps/web` builds with `output: "standalone"` (Next's self-contained
+  server, no `node_modules` install needed at runtime) and
+  `outputFileTracingRoot` pointed at the monorepo root, since Next's file
+  tracer otherwise roots itself at `apps/web` and silently drops workspace
+  dependencies living outside it (`packages/shared`).
+- `apps/api` builds via `apps/api/build.mjs` (esbuild), not plain `tsc`.
+  `@pcc/config`, `@pcc/shared`, and `@pcc/db` all resolve to their
+  TypeScript *source* via `package.json`'s `main` field by design, so
+  `tsx` (dev) and `vitest` (tests) work with zero build step — but that
+  same resolution makes a plain `tsc`-compiled `dist/index.js`
+  unexecutable by plain Node in production (`Cannot find module
+  '.../src/env.js'`), since Node can't run `.ts` source directly. The
+  esbuild bundle inlines those three packages' source into one
+  `dist/index.js` while leaving every real npm dependency external. See
+  `docs/DEPLOYMENT.md` §10 for the full incident writeup and the exact
+  commands that verified the fix.
+- Config validation (`apps/api/src/config.ts`) is environment-aware:
+  `NODE_ENV=production` additionally requires a `SESSION_SECRET` of at
+  least 32 characters and an `APP_BASE_URL` starting with `https://` —
+  enforced at startup via a zod `superRefine`, not just documented.
+- `GET /health` (liveness, no I/O) and `GET /ready` (readiness, a real
+  `SELECT 1`) are separate endpoints, both exempt from rate limiting, so a
+  platform's health probe is never throttled and a liveness check never
+  restarts a healthy process over a transient DB blip.
+- `@fastify/rate-limit` is registered globally (300 req/min/IP) with a
+  stricter override (10 req/min/IP) on `/auth/login` and `/auth/signup` —
+  this closes a gap SECURITY.md had documented as an intended rule with no
+  implementation behind it until this phase.
 
 ## 4. Data flow example — Home screen load
 
@@ -466,7 +503,7 @@ Matches the spec's list; columns are illustrative, not final DDL:
 - `ai_analyses` — id, conversation_id, kind (FACT/ESTIMATE/SCENARIO/…),
   content
 - `orders` / `trades` — id, user_id, instrument_id, side, quantity, status,
-  ibkr_order_id, confirmed_at, submitted_at (Phase 7)
+  ibkr_order_id, confirmed_at, submitted_at (Phase 8 — trading, not built)
 - `system_events` (**implemented, Phase 6** — actual model: `SystemEvent`,
   Phase 1 scaffold, first populated this phase) — id, component, level,
   message, metadata, created_at (audit log for the scheduler and alert

@@ -17,6 +17,13 @@ describe("health endpoints", () => {
     expect(response.json()).toMatchObject({ status: "ok" });
   });
 
+  it("GET /ready reports readiness with a real database check", async () => {
+    const response = await app.inject({ method: "GET", url: "/ready" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ status: "ready" });
+  });
+
   it("GET /api/v1/health reports real per-integration status, none hardcoded operational", async () => {
     const response = await app.inject({ method: "GET", url: "/api/v1/health" });
 

@@ -1,0 +1,81 @@
+# Reference production stack: Postgres + API (Fastify, persistent process)
+# + Web (Next.js standalone). This is one deployment option documented in
+# docs/DEPLOYMENT.md (self-hosted / VPS / any Docker-capable host) — a
+# managed-platform deployment (Railway, Render, Fly.io) uses its own
+# equivalent of this same image build, not this compose file directly.
+#
+# Usage:
+#   cp .env.production.example .env.production   # fill in real secrets
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+#
+# Never commit .env.production — see SECURITY.md §1 and .gitignore.
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-pcc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}
+      POSTGRES_DB: ${POSTGRES_DB:-portfolio_command_center}
+    volumes:
+      - pcc-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-pcc}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Not published to the host/internet — only the api service reaches it,
+    # over the compose network. See docs/DEPLOYMENT.md "Database".
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-pcc}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-portfolio_command_center}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env.production — see .env.production.example}
+      APP_BASE_URL: ${APP_BASE_URL:?set APP_BASE_URL in .env.production — the web service's real public https:// URL}
+      IBKR_GATEWAY_BASE_URL: ${IBKR_GATEWAY_BASE_URL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.4-mini}
+      FINNHUB_API_KEY: ${FINNHUB_API_KEY:-}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    ports:
+      - "4000:4000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Baked into the client bundle at build time — must be the API
+        # service's real public URL (not the internal "api:4000" DNS name,
+        # which only resolves inside this compose network).
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:?set NEXT_PUBLIC_API_BASE_URL in .env.production — the api service's real public https:// URL}
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  pcc-postgres-data:
