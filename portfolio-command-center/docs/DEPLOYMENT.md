@@ -293,6 +293,30 @@ re-run this phase (see the final report's "Browser smoke test" section).
 No page depends on fake data — confirmed by the repo-wide audit in §1 of
 the final report.
 
+### Listening on a platform-assigned PORT (Railway et al.)
+
+Next's standalone `server.js` reads `process.env.PORT` at container
+start (Next's own documented behavior) — this already works correctly
+against whatever `PORT` a platform like Railway injects into the running
+container, with no code change needed; `ENV PORT=3000` in the Dockerfile
+is only the fallback default for self-hosted/local runs where nothing
+injects one.
+
+**Bug found and fixed**: the Docker `HEALTHCHECK` instruction had `3000`
+hardcoded as a literal in its JS string, baked at *build* time — unlike
+`process.env.PORT`, that literal doesn't adapt to whatever port the
+platform actually assigns at runtime. If a platform assigns a container
+any port other than 3000, Docker's own healthcheck would keep probing
+the wrong port and could report the container unhealthy regardless of
+whether the app itself is working fine. Fixed by having the healthcheck
+script read `process.env.PORT` itself, falling back to 3000 only when
+unset. Verified directly: built the image, ran it with `-e PORT=4501`
+(simulating a Railway-style non-default assigned port), and confirmed
+both that Next itself logs `"Local: http://localhost:4501"` (already
+correct beforehand) and that `docker inspect`'s health status reports
+`"healthy"` (previously would have kept probing the wrong, hardcoded
+port).
+
 ## 10. Backend production build
 
 **Bug found and fixed this phase**: `@pcc/config`, `@pcc/shared`, and

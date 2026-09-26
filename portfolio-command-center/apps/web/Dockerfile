@@ -57,11 +57,20 @@ RUN groupadd --system --gid 1001 pcc && useradd --system --uid 1001 --gid pcc pc
 USER pcc
 
 WORKDIR /app/apps/web
+# 3000 is only the fallback for self-hosted/local runs (docker-compose.prod.yml,
+# `docker run` without -e PORT). Railway (and most platforms) inject their
+# own PORT at container start, which overrides this default — server.js
+# already reads process.env.PORT correctly either way (Next's own
+# behavior). EXPOSE is documentation only; it doesn't bind a fixed port.
 EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
+# Reads process.env.PORT at the moment the healthcheck actually runs, not
+# a value baked in at build time — otherwise this would keep probing 3000
+# even after Railway assigns the container a different port, misreporting
+# container health regardless of the app's real state.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "const port=process.env.PORT||3000;fetch('http://127.0.0.1:'+port+'/login').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"
 
 CMD ["node", "server.js"]
