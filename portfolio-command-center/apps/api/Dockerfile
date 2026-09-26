@@ -52,17 +52,34 @@ FROM base AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 
-# Only node_modules (for the external runtime deps the bundle still
-# imports — fastify, @prisma/client + its generated query engine, etc.)
-# and the bundle itself. No packages/, no prisma/ source, no apps/web —
-# everything internal is already inlined into dist/index.js.
+# Both node_modules directories, at the SAME relative depth they had in
+# the build stage (/repo -> /app, /repo/apps/api -> /app/apps/api) — this
+# is not optional. pnpm's workspace install does not hoist a package's own
+# direct dependencies to the workspace-root node_modules; it only puts the
+# real, resolvable entry-point symlinks (fastify, @prisma/client, zod,
+# pino, @node-rs/argon2, the @fastify/* plugins, ...) in apps/api/node_modules,
+# pointing relatively into the shared .pnpm store that lives under the
+# root node_modules. An earlier version of this file copied only the root
+# node_modules, which holds that shared store plus only the ROOT
+# package.json's own (dev) dependencies — none of apps/api's actual
+# runtime dependencies. The container built and deployed but crashed
+# immediately with `ERR_MODULE_NOT_FOUND: Cannot find package
+# '@prisma/client'`, because Node's resolution from dist/index.js could
+# never find a node_modules/@prisma/client entry point at all. Copying
+# apps/api/node_modules at its original relative depth keeps every one of
+# its relative symlinks (e.g. `apps/api/node_modules/@prisma/client ->
+# ../../../node_modules/.pnpm/@prisma+client@.../node_modules/@prisma/client`)
+# resolving to the correct place. No packages/, no prisma/ source, no
+# apps/web — everything internal is already inlined into dist/index.js.
 COPY --from=build /repo/node_modules ./node_modules
-COPY --from=build /repo/apps/api/package.json ./package.json
-COPY --from=build /repo/apps/api/dist ./dist
+COPY --from=build /repo/apps/api/node_modules ./apps/api/node_modules
+COPY --from=build /repo/apps/api/package.json ./apps/api/package.json
+COPY --from=build /repo/apps/api/dist ./apps/api/dist
 
 RUN groupadd --system --gid 1001 pcc && useradd --system --uid 1001 --gid pcc pcc
 USER pcc
 
+WORKDIR /app/apps/api
 EXPOSE 4000
 
 # Liveness probe the platform can use directly (see docs/DEPLOYMENT.md

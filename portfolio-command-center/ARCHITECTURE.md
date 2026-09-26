@@ -410,6 +410,18 @@ detector table, the cooldown/dedup mechanism, and known limitations:
   `dist/index.js` while leaving every real npm dependency external. See
   `docs/DEPLOYMENT.md` §10 for the full incident writeup and the exact
   commands that verified the fix.
+- The Docker runtime image copies **both** `node_modules` directories
+  (workspace root and `apps/api/node_modules`) at their original relative
+  depth, not just the root one. pnpm's workspace install never hoists a
+  package's own direct dependencies to the workspace root — it only
+  stores the shared package content there; the actual resolvable
+  `node_modules/<pkg>` entry point for each of `apps/api`'s real
+  dependencies (`@prisma/client`, `fastify`, `zod`, ...) lives only in
+  `apps/api/node_modules/`. Copying just the workspace root left the
+  built image with no resolvable `@prisma/client` at all, which built and
+  deployed fine but crashed the container on first boot with
+  `ERR_MODULE_NOT_FOUND`. See `docs/DEPLOYMENT.md` §11 for the full
+  incident writeup.
 - Config validation (`apps/api/src/config.ts`) is environment-aware:
   `NODE_ENV=production` additionally requires a `SESSION_SECRET` of at
   least 32 characters and an `APP_BASE_URL` starting with `https://` —

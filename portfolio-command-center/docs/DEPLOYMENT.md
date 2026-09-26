@@ -516,6 +516,63 @@ front of ports 3000 (web) and 4000 (api) — the compose file itself
 publishes them on plain HTTP for simplicity; do not expose those ports
 directly to the internet without TLS termination in front.
 
+### Second deploy failure: container built and deployed, then crashed at startup
+
+After the build-context fix above, Railway's build and deploy both
+succeeded, but the `api` container crashed immediately with:
+
+```
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@prisma/client' imported from /app/dist/index.js
+    code: 'ERR_MODULE_NOT_FOUND'
+```
+
+**Root cause:** pnpm's workspace install does not hoist a workspace
+package's own direct dependencies to the workspace-root `node_modules/`.
+It stores each package's actual content once, in a shared
+`node_modules/.pnpm/` store at the workspace root, but the *resolvable
+entry-point symlink* Node's module resolution actually looks up
+(`node_modules/@prisma/client`, `node_modules/fastify`, `node_modules/zod`,
+etc.) is created only inside **that package's own** `node_modules/` —
+here, `apps/api/node_modules/`. Confirmed directly: the workspace root
+`node_modules/@prisma` doesn't exist at all; `apps/api/node_modules/@prisma/client`
+does, as a relative symlink two directories deeper into the shared store
+(`apps/api/node_modules/@prisma/client -> ../../../node_modules/.pnpm/@prisma+client@.../node_modules/@prisma/client`).
+The runtime stage's `COPY --from=build /repo/node_modules ./node_modules`
+copied only the workspace root — which holds the shared `.pnpm` store
+plus only the *root* `package.json`'s own (dev) dependencies — and never
+copied `apps/api/node_modules`, so every one of `apps/api`'s actual
+runtime dependencies (`@prisma/client`, `fastify`, the `@fastify/*`
+plugins, `@node-rs/argon2`, `openai`, `pino`, `zod`) had no resolvable
+entry point in the image at all. `@prisma/client` was simply the first
+one imported in the bundle's module graph, so it was the first to fail.
+
+This went undetected by every earlier verification in this document
+because those all ran `node dist/index.js` directly from a full checkout
+on disk (`apps/api/node_modules` was present there, just never copied
+into the *Docker image*) — the bug only exists in what the Docker COPY
+instructions actually include, which is why it needed an actual container
+run, not just a local `node` run, to surface.
+
+**Fix:** the runtime stage now also copies `apps/api/node_modules`,
+preserving the same relative depth it had in the build stage
+(`/repo/apps/api` → `/app/apps/api`, alongside `/repo/node_modules` →
+`/app/node_modules`) so every relative symlink still resolves to the
+correct place — nothing was flattened, nothing needed re-pointing.
+
+**Verified:** rebuilt and ran the fixed image in this sandbox (using the
+same apt-get-and-corepack-CA workaround described above, purely to get
+past this sandbox's own network restrictions). The
+`ERR_MODULE_NOT_FOUND` error is gone entirely — the log now shows
+`"Server listening at http://127.0.0.1:4011"` and the process proceeds all
+the way into Prisma's own native query-engine load step, which is a
+*different, later* stage of startup than the one that was crashing. It
+then hits `libssl.so.1.1: cannot open shared object file` — expected and
+harmless: that specific scratch verification build had its `apt-get
+install openssl` line deliberately removed to route around this
+sandbox's blocked `deb.debian.org` mirror (see above); the real, committed
+Dockerfile still installs `openssl`/`ca-certificates`, and Railway's build
+servers have normal internet access to install them.
+
 ## 12. Scheduler in production
 
 Documented behavior (see `docs/ALERTS_AND_MONITORING.md` for the full
