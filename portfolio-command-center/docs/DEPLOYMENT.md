@@ -55,12 +55,12 @@ management, automatic HTTPS, a simple deploy workflow, visible logs,
 predictable restart behavior, backups, and cost. Not evaluated: raw
 performance — this is a single-user (or small-N-user) personal app.
 
-| Provider | Persistent process | Managed Postgres | Secrets | HTTPS | Deploy | Backups | Est. cost/mo |
-|---|---|---|---|---|---|---|---|
-| **Railway** (recommended) | Yes — containers stay running, no cold-start sleep on paid usage | Yes, one click, own volume | Env var UI, per-service | Automatic on `*.up.railway.app`, custom domain supported | `git push` or Dockerfile build from this repo | Automatic daily snapshots on the Postgres plugin (see their docs for retention) | ~$5-10 (usage-based Hobby) + a few $ for Postgres storage |
-| **Fly.io** | Yes — Fly Machines are real persistent VMs; best fit if the IBKR gateway is later colocated as a second process/machine | Yes (Fly Postgres) or bring your own (Neon, Supabase) | `fly secrets set`, per-app | Automatic via Fly's edge proxy | `fly deploy` from the Dockerfiles in this repo | Fly Postgres supports scheduled volume snapshots; manual `pg_dump` also easy since you have shell access | ~$5-15 (smallest shared-cpu machine + a small Postgres volume) |
-| **Render** | Yes for a paid Web Service; the *free* tier sleeps after inactivity, which breaks the scheduler — do not use free tier for apps/api | Yes, managed | Env var UI, per-service | Automatic | Connects to this GitHub repo, builds from `apps/api/Dockerfile` / `apps/web/Dockerfile` | Managed Postgres includes automated daily backups on paid plans | ~$7 (Starter Web Service) × 2 services + ~$7 (Postgres) ≈ $21 |
-| Self-hosted VPS + `docker-compose.prod.yml` (this repo has one) | Yes — you control it entirely | You run Postgres yourself (the compose file included) | A `.env.production` file on the box, or the VPS provider's secret store | Manual — put Caddy or nginx+certbot in front | `docker compose up -d --build` over SSH | Entirely your responsibility — cron a `pg_dump` (see §7) | ~$5-6 (smallest Hetzner/DigitalOcean droplet) |
+| Provider                                                        | Persistent process                                                                                                                  | Managed Postgres                                      | Secrets                                                                 | HTTPS                                                    | Deploy                                                                                  | Backups                                                                                                  | Est. cost/mo                                                   |
+|-----------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------|-------------------------------------------------------------------------|----------------------------------------------------------|-----------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------|----------------------------------------------------------------|
+| **Railway** (recommended)                                       | Yes — containers stay running, no cold-start sleep on paid usage                                                                    | Yes, one click, own volume                            | Env var UI, per-service                                                 | Automatic on `*.up.railway.app`, custom domain supported | `git push` or Dockerfile build from this repo                                           | Automatic daily snapshots on the Postgres plugin (see their docs for retention)                          | ~$5-10 (usage-based Hobby) + a few $ for Postgres storage      |
+| **Fly.io**                                                      | Yes — Fly Machines are real persistent VMs; best fit if the IBKR gateway is later colocated as a second process/machine             | Yes (Fly Postgres) or bring your own (Neon, Supabase) | `fly secrets set`, per-app                                              | Automatic via Fly's edge proxy                           | `fly deploy` from the Dockerfiles in this repo                                          | Fly Postgres supports scheduled volume snapshots; manual `pg_dump` also easy since you have shell access | ~$5-15 (smallest shared-cpu machine + a small Postgres volume) |
+| **Render**                                                      | Yes for a paid Web Service; the *free* tier sleeps after inactivity, which breaks the scheduler — do not use free tier for apps/api | Yes, managed                                          | Env var UI, per-service                                                 | Automatic                                                | Connects to this GitHub repo, builds from `apps/api/Dockerfile` / `apps/web/Dockerfile` | Managed Postgres includes automated daily backups on paid plans                                          | ~$7 (Starter Web Service) × 2 services + ~$7 (Postgres) ≈ $21  |
+| Self-hosted VPS + `docker-compose.prod.yml` (this repo has one) | Yes — you control it entirely                                                                                                       | You run Postgres yourself (the compose file included) | A `.env.production` file on the box, or the VPS provider's secret store | Manual — put Caddy or nginx+certbot in front             | `docker compose up -d --build` over SSH                                                 | Entirely your responsibility — cron a `pg_dump` (see §7)                                                 | ~$5-6 (smallest Hetzner/DigitalOcean droplet)                  |
 
 **Recommendation: Railway** for the first deploy. It's the least
 operational overhead for a persistent Fastify + Postgres + Next.js stack,
@@ -369,58 +369,113 @@ traffic-gating probe (Railway/Render/Fly all just use one; point it at
 `/health` there, since `/ready` failing only means "DB is briefly down",
 which restarting the API process would not fix).
 
-## 11. What was actually verified in this sandbox
+## 11. Build context — this app lives in a subdirectory of the real repo
 
-No hosting provider credentials exist here (checked: no Railway/Fly/Render
-tokens in the environment). Docker Hub pulls through this sandbox's egress
-proxy also failed (`429 Too Many Requests`, then a signed-URL `403` on a
-retry) — the Dockerfiles below are written and their build steps
-individually verified to work (every `RUN` command in them was executed
-manually, in order, outside Docker, against this same Postgres, and
-produced a working server — see below), but the images themselves were
-never built end-to-end in this environment. That is a sandbox network
-limitation, not an untested design.
+This matters more than it sounds like it should, and it was the cause of
+a real deploy failure, so it gets its own section rather than a footnote.
 
-What **was** run directly, with real output:
+`portfolio-command-center/` is a **subdirectory** of the actual GitHub
+repository (`github.com/Yonaben99/coder`) — it is not the repository root.
+Railway (and most CI Docker builders) set the Docker **build context** to
+the real repository root regardless of where the Dockerfile itself lives;
+pointing a platform at a "Dockerfile path" like
+`portfolio-command-center/apps/api/Dockerfile` does not, by itself, change
+the build context to that subdirectory.
 
-1. `pnpm --filter @pcc/api build` → produced `apps/api/dist/index.js`
-   (esbuild bundle, ~192KB).
-2. `NODE_ENV=production DATABASE_URL=... SESSION_SECRET=... APP_BASE_URL=https://example.com PORT=4009 node apps/api/dist/index.js` →
-   started cleanly, logged `"Server listening at http://0.0.0.0:4009"`,
-   no errors.
-3. `curl http://localhost:4009/health` → `{"status":"ok","uptimeSeconds":6}`
-4. `curl http://localhost:4009/ready` → `{"status":"ready"}`
-5. `curl http://localhost:4009/api/v1/health` → all 7 integrations
-   reporting honest real states, `database: operational`,
-   `scheduled_jobs: operational`.
-6. `curl -i -X POST http://localhost:4009/api/v1/auth/signup ...` → `201`,
-   with `Set-Cookie: pcc_session=...; HttpOnly; Secure; SameSite=Strict`,
-   full Helmet header set, `x-ratelimit-limit: 10`.
-7. `pnpm --filter @pcc/web build` (with `output: "standalone"` +
-   `outputFileTracingRoot` fixed) → produced
-   `apps/web/.next/standalone/apps/web/server.js`.
-8. `cp -r .next/static .next/standalone/apps/web/.next/` (per Next's own
-   docs for standalone deploys) then
-   `PORT=3009 HOSTNAME=0.0.0.0 NODE_ENV=production node .next/standalone/apps/web/server.js` →
-   started cleanly.
-9. `curl http://localhost:3009/` → `200`; `/login` → `200`;
-   `/manifest.webmanifest` → the real generated manifest JSON;
-   `/icon` → `200 image/png`; response headers confirmed
-   `X-Frame-Options: DENY` etc. present.
+**What broke, concretely:** an earlier version of both Dockerfiles wrote
+every `COPY` source path relative to `portfolio-command-center/` (e.g.
+`COPY prisma/schema.prisma prisma/schema.prisma`), on the assumption the
+build context already started there. On Railway, with the context
+actually rooted at the outer repo, that resolved to
+`<repo-root>/prisma/schema.prisma` — which doesn't exist (the real file is
+at `<repo-root>/portfolio-command-center/prisma/schema.prisma`) — and the
+build failed with `"/prisma/schema.prisma": not found`. Every other
+unprefixed `COPY` path had the same latent bug.
 
-This is the same set of commands the Dockerfiles run (`docker build`
-executes the identical `pnpm install` → `prisma generate` → build →
-runtime-copy sequence); the only untested step is the Docker layer
-packaging itself.
+**The fix**, now in both Dockerfiles: every `COPY` source path is prefixed
+with `portfolio-command-center/`, and the source tree copy is
+`COPY portfolio-command-center/ .` instead of `COPY . .`. Destination
+paths inside the image are unchanged, so nothing downstream (the esbuild
+bundle, `prisma generate`, the Next.js standalone copy) needed to change.
+
+There's a second problem this also has to route around: the outer repo
+already has its own root `.dockerignore`, and it's a **deny-all
+allowlist** (`**` then `!dogfood/**` only) tuned for that repo's own image
+builds — completely unrelated to this app, and not something to edit or
+depend on. If the build context is the repo root, that file would exclude
+`portfolio-command-center/` entirely regardless of path prefixing. Fixed
+with a **Dockerfile-specific ignore file** — `apps/api/Dockerfile.dockerignore`
+and `apps/web/Dockerfile.dockerignore`, one next to each Dockerfile. Per
+BuildKit's own convention, a file named `<dockerfile-name>.dockerignore`
+in the same directory as the Dockerfile takes priority over the
+context-root `.dockerignore`, with no changes to that shared file. Each
+one denies everything, re-allows `portfolio-command-center/**`, then
+re-denies that app's own build artifacts (`node_modules`, `.next`,
+`dist`, etc.) so the context stays small.
+
+**Build commands now assume the repository root as context:**
+
+```bash
+# from the OUTER repo root (one level up from portfolio-command-center/)
+docker build -f portfolio-command-center/apps/api/Dockerfile -t pcc-api .
+docker build -f portfolio-command-center/apps/web/Dockerfile -t pcc-web .
+```
+
+### Verified in this sandbox
+
+No hosting-provider credentials exist here (checked: no Railway/Fly/Render
+tokens in the environment). What **was** verified directly, with real
+output, using this sandbox's own Docker daemon:
+
+1. `docker build -f portfolio-command-center/apps/api/Dockerfile -t pcc-api .`
+   run from the outer repo root — build context transferred at **1.04MB**
+   (confirms `Dockerfile.dockerignore` correctly scopes the context to
+   just this app, not the whole outer monorepo), and **every `COPY` step
+   succeeded**, including the exact one that previously failed:
+   `COPY portfolio-command-center/prisma/schema.prisma prisma/schema.prisma` → `DONE 0.0s`.
+   The build then hit `apt-get update` against `deb.debian.org`, which
+   this sandbox's egress proxy returns `403 Forbidden` for (confirmed with
+   a direct `curl` to the same host, both `http://` and `https://` — not
+   specific to Docker). That is a sandbox-only network policy; Railway's
+   real build infrastructure has normal internet access.
+2. To verify past that sandbox-specific wall, a scratch copy of the same
+   Dockerfile with only the `apt-get` line removed (never committed) was
+   built the same way: **all 8 `COPY` layers succeeded** for both
+   `apps/api/Dockerfile` and `apps/web/Dockerfile`, then both hit a
+   *second*, different sandbox-only wall — `pnpm install` triggers
+   corepack to fetch pnpm from `registry.npmjs.org`, which fails here with
+   `SELF_SIGNED_CERT_IN_CHAIN` (this sandbox's egress proxy TLS-intercepts
+   and its CA isn't trusted inside the build container). Again, not a
+   Railway concern — this is purely about this local sandbox's proxy
+   setup, and it occurred identically for both Dockerfiles, immediately
+   after every `COPY` layer had already succeeded.
+3. Separately, `pnpm --filter @pcc/api build` (esbuild bundle) and
+   `pnpm --filter @pcc/web build` (Next.js standalone) were run directly
+   (outside Docker) and their outputs started cleanly and served real
+   traffic — `curl http://localhost:4009/health` → `{"status":"ok",...}`,
+   `/ready` → `{"status":"ready"}`, `POST /api/v1/auth/signup` → `201`
+   with correct `Secure`/`HttpOnly`/`SameSite=Strict` cookie and Helmet
+   headers; the web standalone server served `/`, `/login`,
+   `/manifest.webmanifest`, `/icon` all `200`. These are the exact same
+   commands each Dockerfile's `build` stage runs.
+
+Combined, this covers every step each Dockerfile executes except the
+final `apt-get`/registry fetch, both of which are blocked by this
+sandbox's own network policy rather than anything in the Dockerfile —
+Railway's build servers have ordinary outbound internet access to
+`deb.debian.org` and `registry.npmjs.org`.
 
 ### To actually deploy (Railway — exact steps)
 
 1. Create a Railway project, add a Postgres plugin (gives you a
    `DATABASE_URL` automatically).
-2. Add a service from this GitHub repo pointed at `apps/api/Dockerfile`
-   (Railway auto-detects Dockerfiles; set the Docker build context to the
-   repo root, not `apps/api/`, since the Dockerfile expects the monorepo
-   root — see the comment at the top of the file).
+2. Add a service from this GitHub repo. In its settings, set **Dockerfile
+   Path** to `portfolio-command-center/apps/api/Dockerfile` and leave
+   **Root Directory** unset (default = repository root) — the Dockerfile
+   is written to expect the repository root as build context; do **not**
+   set Root Directory to `portfolio-command-center`, which would make the
+   `portfolio-command-center/`-prefixed `COPY` paths resolve one level too
+   deep.
 3. Set env vars on that service from `.env.production.example`:
    `NODE_ENV=production`, `SESSION_SECRET` (generate fresh), `APP_BASE_URL`
    (fill in after step 5 gives you the web service's URL), leave
@@ -429,8 +484,9 @@ packaging itself.
 4. After first deploy, run the migration once:
    `railway run --service api pnpm --filter @pcc/db prisma:migrate:deploy`
    (or open a shell in the deployed container and run it there).
-5. Add a second service from the same repo pointed at
-   `apps/web/Dockerfile`, with build arg
+5. Add a second service from the same repo: **Dockerfile Path** =
+   `portfolio-command-center/apps/web/Dockerfile`, Root Directory again
+   left unset, with build arg
    `NEXT_PUBLIC_API_BASE_URL=<the api service's Railway URL>`.
 6. Go back to step 3's `api` service and set `APP_BASE_URL` to the `web`
    service's Railway URL; redeploy `api` so CORS/cookies match.
@@ -440,11 +496,20 @@ packaging itself.
 
 ### To deploy self-hosted
 
+Run from the **outer repository root** (one level up from
+`portfolio-command-center/`), matching the same build-context convention:
+
 ```bash
-cp .env.production.example .env.production   # fill in real values
-docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
-docker compose -f docker-compose.prod.yml exec api pnpm --filter @pcc/db prisma:migrate:deploy
+cp portfolio-command-center/.env.production.example portfolio-command-center/.env.production   # fill in real values
+docker compose -f portfolio-command-center/docker-compose.prod.yml \
+  --env-file portfolio-command-center/.env.production up -d --build
+docker compose -f portfolio-command-center/docker-compose.prod.yml exec api \
+  pnpm --filter @pcc/db prisma:migrate:deploy
 ```
+
+`docker-compose.prod.yml`'s `build.context` is set to `..` (this same
+repo-root convention) precisely so this works — see the Dockerfiles'
+comments for why the context can't be `portfolio-command-center/` itself.
 
 Put a reverse proxy with a real TLS certificate (Caddy/nginx+certbot) in
 front of ports 3000 (web) and 4000 (api) — the compose file itself
@@ -570,14 +635,14 @@ redeploy, by design.
 
 ## 17. Cost estimate (Railway, recommended path)
 
-| Item | Estimate |
-|---|---|
-| Railway Hobby usage (api + web services, low personal-app traffic) | ~$5-8/mo |
-| Railway Postgres plugin (small volume) | ~$2-5/mo |
-| Domain (optional, not required for first deploy) | ~$10-15/year if you attach one |
-| OpenAI API usage | **$0 until you add `OPENAI_API_KEY`** — not counted, since it's intentionally unset |
-| Finnhub | **$0** — free tier covers this app's usage; not counted for the same reason |
-| **Total to get a working, honestly-`not_configured` deployment** | **≈ $7-13/mo** |
+| Item                                                               | Estimate                                                                            |
+|--------------------------------------------------------------------|-------------------------------------------------------------------------------------|
+| Railway Hobby usage (api + web services, low personal-app traffic) | ~$5-8/mo                                                                            |
+| Railway Postgres plugin (small volume)                             | ~$2-5/mo                                                                            |
+| Domain (optional, not required for first deploy)                   | ~$10-15/year if you attach one                                                      |
+| OpenAI API usage                                                   | **$0 until you add `OPENAI_API_KEY`** — not counted, since it's intentionally unset |
+| Finnhub                                                            | **$0** — free tier covers this app's usage; not counted for the same reason         |
+| **Total to get a working, honestly-`not_configured` deployment**   | **≈ $7-13/mo**                                                                      |
 
 ## Troubleshooting
 

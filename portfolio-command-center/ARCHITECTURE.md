@@ -381,12 +381,19 @@ detector table, the cooldown/dedup mechanism, and known limitations:
   jobs inside the running process with no external cron calling back in, so
   a platform that spins the process down between requests would silently
   stop it.
-- `apps/api/Dockerfile` and `apps/web/Dockerfile` (repo root, multi-stage,
-  non-root runtime user) plus a reference `docker-compose.prod.yml`
+- `apps/api/Dockerfile` and `apps/web/Dockerfile` (multi-stage, non-root
+  runtime user) plus a reference `docker-compose.prod.yml`
   (Postgres + api + web) cover the self-hosted path; a managed platform
   build (Railway/Fly/Render) uses the same two Dockerfiles directly. Both
-  must be built with the **monorepo root** as Docker build context — see
-  the comment at the top of each Dockerfile.
+  must be built with the **actual repository root** (the outer
+  `github.com/Yonaben99/coder` checkout, one level up from
+  `portfolio-command-center/`) as Docker build context, not
+  `portfolio-command-center/` itself — every `COPY` source path is
+  prefixed accordingly, and a `Dockerfile.dockerignore` next to each
+  Dockerfile keeps the build context scoped to this app despite the outer
+  repo's own unrelated, allowlist-style root `.dockerignore`. See the
+  comment at the top of each Dockerfile and `docs/DEPLOYMENT.md` §11 for
+  the real deploy failure this fixed.
 - `apps/web` builds with `output: "standalone"` (Next's self-contained
   server, no `node_modules` install needed at runtime) and
   `outputFileTracingRoot` pointed at the monorepo root, since Next's file

@@ -1,5 +1,12 @@
-# Keeps Docker build context small and never ships local secrets/build
-# artifacts into an image layer.
+# Historical/local-reference .dockerignore — NOT used by the actual
+# production Docker builds. Railway and `docs/DEPLOYMENT.md`'s documented
+# `docker build` invocations run with the OUTER repository as build
+# context (see the comment atop apps/api/Dockerfile and
+# apps/web/Dockerfile for why), where Docker looks for
+# apps/api/Dockerfile.dockerignore / apps/web/Dockerfile.dockerignore
+# instead of this file. This file has no effect unless something builds
+# with this directory itself as context, which nothing in this repo does
+# anymore.
 .env
 .env.local
 .env.*.local

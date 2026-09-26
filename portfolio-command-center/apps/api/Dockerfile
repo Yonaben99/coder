@@ -1,7 +1,18 @@
 # Portfolio Command Center — API (Fastify) production image.
 #
-# Build from the MONOREPO ROOT so the pnpm workspace resolves correctly:
-#   docker build -f apps/api/Dockerfile -t pcc-api .
+# This app lives in a SUBDIRECTORY of the actual repository
+# (github.com/Yonaben99/coder), at `portfolio-command-center/`. Railway
+# (and most CI Docker builders) set the build context to the REPOSITORY
+# ROOT even when the Dockerfile itself lives deeper in the tree — pointing
+# a platform at a "Dockerfile path" does not by itself change the context
+# to that subdirectory. Every COPY source path below is therefore prefixed
+# with `portfolio-command-center/`, and Dockerfile.dockerignore (next to
+# this file) keeps the build context scoped to just this app rather than
+# the whole outer monorepo — see that file's own comment for why a plain
+# root `.dockerignore` doesn't work here.
+#
+# Build from the REPOSITORY ROOT (the outer `coder` checkout):
+#   docker build -f portfolio-command-center/apps/api/Dockerfile -t pcc-api .
 #
 # This is a persistent long-running process (not serverless) by design —
 # it hosts the Phase 6 Scheduler and, later, the IBKR Client Portal Gateway
@@ -16,18 +27,18 @@ RUN corepack enable
 
 FROM base AS deps
 WORKDIR /repo
-COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
-COPY apps/api/package.json apps/api/package.json
-COPY apps/web/package.json apps/web/package.json
-COPY packages/config/package.json packages/config/package.json
-COPY packages/shared/package.json packages/shared/package.json
-COPY prisma/package.json prisma/package.json
-COPY prisma/schema.prisma prisma/schema.prisma
+COPY portfolio-command-center/pnpm-workspace.yaml portfolio-command-center/pnpm-lock.yaml portfolio-command-center/package.json ./
+COPY portfolio-command-center/apps/api/package.json apps/api/package.json
+COPY portfolio-command-center/apps/web/package.json apps/web/package.json
+COPY portfolio-command-center/packages/config/package.json packages/config/package.json
+COPY portfolio-command-center/packages/shared/package.json packages/shared/package.json
+COPY portfolio-command-center/prisma/package.json prisma/package.json
+COPY portfolio-command-center/prisma/schema.prisma prisma/schema.prisma
 RUN pnpm install --frozen-lockfile
 
 FROM deps AS build
 WORKDIR /repo
-COPY . .
+COPY portfolio-command-center/ .
 RUN pnpm --filter @pcc/db prisma:generate
 # Bundles apps/api/src together with @pcc/config, @pcc/shared, and @pcc/db's
 # source into one dist/index.js (see apps/api/build.mjs for why: those

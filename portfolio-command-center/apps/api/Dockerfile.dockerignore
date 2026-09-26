@@ -1,0 +1,24 @@
+# Dockerfile-specific ignore file. BuildKit uses "<dockerfile-name>.dockerignore"
+# next to the Dockerfile in preference to the build context root's own
+# .dockerignore, when both exist. This matters here because the build
+# context is the outer repository root (see the comment atop
+# apps/api/Dockerfile), and that repo's own root .dockerignore is an
+# allowlist tuned for its own unrelated image builds (only re-allows
+# dogfood/**) — it would exclude this entire app. This file is the
+# equivalent allowlist for this app instead, without touching that
+# unrelated, shared file.
+#
+# Deny everything, then re-allow this app's own directory, then re-deny
+# its build artifacts/caches so they're never sent to the Docker daemon.
+**
+!portfolio-command-center
+!portfolio-command-center/**
+portfolio-command-center/.env
+portfolio-command-center/.env.local
+portfolio-command-center/.env.*.local
+portfolio-command-center/**/node_modules
+portfolio-command-center/**/.next
+portfolio-command-center/**/dist
+portfolio-command-center/**/coverage
+portfolio-command-center/**/.turbo
+portfolio-command-center/**/*.tsbuildinfo
