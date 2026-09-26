@@ -68,13 +68,27 @@ WORKDIR /app
 # never find a node_modules/@prisma/client entry point at all. Copying
 # apps/api/node_modules at its original relative depth keeps every one of
 # its relative symlinks (e.g. `apps/api/node_modules/@prisma/client ->
-# ../../../node_modules/.pnpm/@prisma+client@.../node_modules/@prisma/client`)
+# ../../../../node_modules/.pnpm/@prisma+client@.../node_modules/@prisma/client`)
 # resolving to the correct place. No packages/, no prisma/ source, no
 # apps/web — everything internal is already inlined into dist/index.js.
 COPY --from=build /repo/node_modules ./node_modules
 COPY --from=build /repo/apps/api/node_modules ./apps/api/node_modules
 COPY --from=build /repo/apps/api/package.json ./apps/api/package.json
 COPY --from=build /repo/apps/api/dist ./apps/api/dist
+
+# Build-time guarantee, not just a comment: fail the BUILD, loudly, if the
+# runtime image's node_modules can't actually resolve what dist/index.js
+# imports — rather than shipping an image that builds and deploys fine and
+# only crashes once a container tries to start (exactly what happened
+# before the fix above: this exact check would have caught it instantly).
+# `@prisma/client` is the one that actually crashed; the rest are every
+# other external dependency the bundle still imports by bare specifier.
+RUN cd apps/api && node -e " \
+  for (const pkg of ['@prisma/client', 'fastify', 'fastify-plugin', '@fastify/cookie', '@fastify/cors', '@fastify/helmet', '@fastify/rate-limit', '@node-rs/argon2', 'openai', 'pino', 'zod']) { \
+    require.resolve(pkg); \
+  } \
+  console.log('All runtime dependencies resolve correctly.'); \
+"
 
 RUN groupadd --system --gid 1001 pcc && useradd --system --uid 1001 --gid pcc pcc
 USER pcc

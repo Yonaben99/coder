@@ -573,6 +573,54 @@ sandbox's blocked `deb.debian.org` mirror (see above); the real, committed
 Dockerfile still installs `openssl`/`ca-certificates`, and Railway's build
 servers have normal internet access to install them.
 
+### Re-verified after a second identical report, plus a build-time guarantee
+
+The exact same `ERR_MODULE_NOT_FOUND` was reported a second time after
+this fix was already live on the branch. Re-investigated from scratch
+rather than assuming the fix was wrong: a **fresh, `--no-cache` Docker
+build** of the exact currently-committed `apps/api/Dockerfile` (not a
+modified copy) was built and run again, using the same sandbox-only
+apt/CA workaround described above. Result: identical to the first
+verification — `ERR_MODULE_NOT_FOUND` does not occur; the server starts
+and logs `"Server listening..."`, then proceeds into Prisma's own native
+engine load (a later, different stage), which only fails here on the
+sandbox-specific missing `libssl`. This is strong evidence the committed
+fix is correct; the most likely explanation for seeing the identical error
+a second time is a deploy that predates this fix reaching the branch, or
+a stale/cached Railway build — **trigger a clean (no build cache) redeploy
+and confirm the deployed commit is at or after the "copy
+apps/api/node_modules into the runtime image" fix** before assuming the
+code is still broken.
+
+Also considered switching the runtime stage to pnpm's own
+`pnpm deploy --legacy` (a built-in command for producing a self-contained,
+non-symlinked dependency tree for one workspace package — the more
+"pnpm-native" way to solve exactly this class of problem). Tested it
+directly: it does produce a fully self-contained `node_modules` with no
+cross-directory relative-symlink dependence, but it does **not** carry
+over the already-generated Prisma Client artifact (`node_modules/.prisma/client`,
+including the query-engine binary) — `prisma generate` writes that
+directly into the existing install rather than it being a tracked
+dependency, so `pnpm deploy` silently drops it, which would require a
+second `prisma generate` run inside the deployed directory to fix. That's
+a strictly bigger, riskier change than the dual-`node_modules`-copy
+already in place and already proven correct, so it was not adopted.
+
+Instead, added a genuine **build-time guarantee** rather than relying only
+on documentation: the runtime stage now runs
+`node -e "require.resolve('@prisma/client'); ..."` (checking every real
+runtime dependency the bundle imports) immediately after the `node_modules`
+copies, before the image is finalized. Verified both directions —
+rebuilt with the fix present (the check passes,
+`"All runtime dependencies resolve correctly."`), then rebuilt with the
+`apps/api/node_modules` copy instruction deliberately removed again (the
+**build itself now fails**, with a clear `MODULE_NOT_FOUND` pointing at
+the exact missing package, at build time, before any deploy or container
+start). This converts "the image builds and deploys fine, then crashes
+the container" into "the build fails immediately, in the Railway build
+log, with a clear stack trace" — the failure mode this whole incident was
+about no longer has a way to reach a running container silently.
+
 ## 12. Scheduler in production
 
 Documented behavior (see `docs/ALERTS_AND_MONITORING.md` for the full
